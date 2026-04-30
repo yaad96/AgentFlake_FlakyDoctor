@@ -581,54 +581,93 @@ def _save_report(base: Path, report: dict):
 
 
 def _print_summary(report: dict):
+    """Binary [PASS]/[FAIL] reporting.
+
+    The bytecode-validity verdict is driven by container `mvn test-compile`
+    when available — it uses Maven's authoritative classpath construction
+    and matches what downstream surefire actually reads. Host-side `javac`
+    is brittle on real Maven projects (Lombok ↔ JDK module-system mismatch,
+    classpath heuristics) and produces frequent false negatives even when
+    the project compiles cleanly via Maven. So we print host-compile
+    informationally with a `[INFO]` label when the container recompile
+    already gave us the authoritative answer, and only let host-compile
+    drive the verdict when the container recompile didn't run."""
     print()
     print("=" * 60)
     print(f"APPLY REPORT  container={report['container']}")
     print("=" * 60)
     for layer in report["layers_attempted"]:
-        ok = "[OK]  " if layer.get("ok") else "[FAIL]"
+        verdict = "[PASS]" if layer.get("ok") else "[FAIL]"
         name = layer.get("layer") or "(none)"
         detail = layer.get("reason") or ""
         if "applied" in layer:
             detail = f"{len(layer['applied'])} applied, {len(layer['failed'])} failed"
-        print(f"  {ok} {name:30s} {detail}")
+        print(f"  {verdict} {name:30s} {detail}")
         if layer.get("failed"):
             for f in layer["failed"]:
                 print(f"           - {f['reason']}")
 
+    rc = report.get("recompile") or {}
+    recompile_ran = bool(rc) and not rc.get("skipped")
+    recompile_ok = recompile_ran and bool(rc.get("ok"))
+
     if report.get("compile"):
         c = report["compile"]
+        # Label: PASS/FAIL only when host compile is the verdict driver.
+        # When the container recompile has already given us the authoritative
+        # answer, host-compile is INFO — its result does not affect verdict.
         if c.get("skipped"):
-            print(f"  [SKIP] compile: {c.get('reason')}")
+            label = "[INFO]" if recompile_ran else "[FAIL]"
+            print(f"  {label} compile (host javac): skipped ({c.get('reason')})")
         else:
-            ok = "[OK]  " if c.get("all_ok") else "[FAIL]"
+            host_ok = c.get("all_ok")
+            if recompile_ran:
+                label = "[INFO]" if host_ok else "[INFO]"  # always INFO when authoritative recompile ran
+            else:
+                label = "[PASS]" if host_ok else "[FAIL]"
             n_ok = sum(1 for r in c["results"] if r["ok"])
             n_total = len(c["results"])
-            print(f"  {ok} compile: {n_ok}/{n_total} files OK")
+            suffix = "" if not recompile_ran else "  (informational; container recompile is authoritative)"
+            print(f"  {label} compile (host javac): {n_ok}/{n_total} files OK{suffix}")
             for r in c["results"]:
                 if not r["ok"]:
                     snippet = r["stderr"].splitlines()[0] if r["stderr"] else ""
                     print(f"           - {r['file']}: {snippet}")
 
     if report.get("recompile"):
-        rc = report["recompile"]
         if rc.get("skipped"):
-            print(f"  [SKIP] recompile: {rc.get('reason')}")
+            print(f"  [FAIL] recompile: skipped ({rc.get('reason')})")
         else:
-            ok = "[OK]  " if rc.get("ok") else "[FAIL]"
+            verdict = "[PASS]" if rc.get("ok") else "[FAIL]"
             mods = ",".join(rc.get("modules", [])) or "(none)"
-            print(f"  {ok} recompile: mvn test-compile -pl {mods}")
+            print(f"  {verdict} recompile: mvn test-compile -pl {mods}")
             if not rc.get("ok"):
                 tail = (rc.get("stderr_tail") or rc.get("stdout_tail") or "")
                 for ln in tail.splitlines()[-5:]:
                     print(f"           {ln}")
 
+    # Verdict: patch must have landed AND the patched bytecode must compile.
+    # Container recompile is the authoritative compile signal; if it didn't
+    # run, fall back to host-compile.
+    landed_ok = bool(report.get("result", {}).get("ok"))
+    if recompile_ran:
+        bytecode_ok = recompile_ok
+    else:
+        c = report.get("compile") or {}
+        bytecode_ok = bool(c) and (not c.get("skipped")) and bool(c.get("all_ok"))
+    overall_ok = landed_ok and bytecode_ok
+
     final = report.get("result", {})
     print()
-    if final.get("ok"):
-        print(f"RESULT: applied via {final.get('layer')}")
+    if overall_ok:
+        print(f"RESULT: PASS — applied via {final.get('layer')}, compiles cleanly")
+    elif landed_ok:
+        if recompile_ran:
+            print(f"RESULT: FAIL — patch landed via {final.get('layer')}, but mvn test-compile failed (see above)")
+        else:
+            print(f"RESULT: FAIL — patch landed via {final.get('layer')}, but compile could not be confirmed (see above)")
     else:
-        print(f"RESULT: FAILED — {final.get('reason', 'no layer landed')}")
+        print(f"RESULT: FAIL — {final.get('reason', 'no layer landed')}")
 
 
 def main():
@@ -741,7 +780,24 @@ def main():
 
     _save_report(base, report)
     _print_summary(report)
-    sys.exit(0 if report["result"].get("ok") else 1)
+
+    # Exit 0 only if everything PASSED end-to-end. Container `mvn test-compile`
+    # is the authoritative bytecode-validity signal (it uses Maven's real
+    # classpath construction); host `javac` is informational only, because it
+    # produces false negatives on Lombok / JDK-module-system / multi-module
+    # projects even when the project compiles fine via Maven.
+    #
+    # Rule: PASS iff (a) a layer landed AND (b) container recompile passed.
+    # Fallback when recompile didn't run: host compile must have run and passed.
+    landed_ok = bool(report["result"].get("ok"))
+    rc = report.get("recompile") or {}
+    if rc and not rc.get("skipped"):
+        bytecode_ok = bool(rc.get("ok"))
+    else:
+        c = report.get("compile") or {}
+        bytecode_ok = bool(c) and (not c.get("skipped")) and bool(c.get("all_ok"))
+
+    sys.exit(0 if (landed_ok and bytecode_ok) else 1)
 
 
 if __name__ == "__main__":

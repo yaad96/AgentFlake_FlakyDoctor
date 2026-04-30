@@ -22,11 +22,11 @@
 #   5. Trace dirs: traces-fixed/ (passing) and traces-flaky/ (failing).
 #
 # Usage:
-#   ./run_od_tracemop.sh <result_container>
+#   ./run_od_tracemop.sh <result_container> <claude|openai>
 #
 # Requires:
-#   ANTHROPIC_API_KEY in the environment (step 11 is mandatory).
-#   pip install anthropic
+#   For backend=claude: ANTHROPIC_API_KEY in the environment + pip install anthropic
+#   For backend=openai: OPENAI_API_KEY    in the environment + pip install openai
 #
 # Steps performed (output dir = data/<container>/Steps Output Files/):
 #   1.  unzip + apply Fixed.patch
@@ -41,7 +41,7 @@
 #   8C. compare-traces-official.py       -> step_8_C_official.txt
 #   9.  generate_llm_summary.py          -> llm_trace_summary.txt
 #   10. assemble_llm_context.py          -> llm_context.txt
-#   11. call_llm.py                      -> llm_response.json
+#   11. call_llm.py / call_llm_openai.py -> llm_response.json
 #   12. apply_fix.py                     -> patches Flaky/ + recompiles bytecode
 #   13. re-run polluter,victim against patched Flaky/ -> verify_after_fix.log
 #
@@ -51,14 +51,31 @@
 set -euo pipefail
 
 # ----- args -------------------------------------------------
-RESULT_CONTAINER="${1:?Usage: $0 <result_container>   (e.g. shardingsphereelasticjobelasticjoblitecore4b9afa4)}"
+RESULT_CONTAINER="${1:?Usage: $0 <result_container> <claude|openai>   (e.g. shardingsphereelasticjobelasticjoblitecore4b9afa4 claude)}"
+LLM_BACKEND="${2:?Usage: $0 <result_container> <claude|openai>   (second arg picks the LLM backend)}"
 
-# ----- fail fast on missing API key (step 11 is mandatory) ---
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "ERROR: ANTHROPIC_API_KEY is not set. Step 11 (call_llm.py) requires it."
-  echo "       export ANTHROPIC_API_KEY=sk-ant-...   then re-run."
-  exit 1
-fi
+case "$LLM_BACKEND" in
+  claude)
+    LLM_SCRIPT="call_llm.py"
+    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      echo "ERROR: ANTHROPIC_API_KEY is not set. Step 11 (call_llm.py) requires it."
+      echo "       export ANTHROPIC_API_KEY=sk-ant-...   then re-run."
+      exit 1
+    fi
+    ;;
+  openai)
+    LLM_SCRIPT="call_llm_openai.py"
+    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+      echo "ERROR: OPENAI_API_KEY is not set. Step 11 (call_llm_openai.py) requires it."
+      echo "       export OPENAI_API_KEY=sk-...   then re-run."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: backend must be 'claude' or 'openai', got '$LLM_BACKEND'."
+    exit 1
+    ;;
+esac
 
 # ----- paths ------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -313,7 +330,7 @@ run_with_tracemop "Flaky" "flaky"
 #
 # Without this guard, a wrong test order (polluter ran AFTER victim) would
 # silently produce two passing runs, an empty trace diff, and a meaningless
-# Claude prompt. We parse the last Surefire summary line of the Flaky-run
+# LLM prompt. We parse the last Surefire summary line of the Flaky-run
 # mvn.log and assert the victim test actually ran AND something failed.
 #
 # Step 6c uses the JavaMOP extension + SUREFIRE_VERSION=3.0.0-M8-SNAPSHOT
@@ -321,7 +338,7 @@ run_with_tracemop "Flaky" "flaky"
 # by their order in -Dtest=. If for any reason the agent didn't attach, or
 # testorder isn't actually being honoured by the active Surefire version,
 # this guard catches the silent passing-Flaky case before we feed empty
-# traces to Claude.
+# traces to the LLM.
 # ============================================================
 echo "[sanity ] Verifying the Flaky run produced an actual test failure"
 SUMMARY=$(grep -E "Tests run:[[:space:]]+[0-9]+,[[:space:]]+Failures:[[:space:]]+[0-9]+,[[:space:]]+Errors:[[:space:]]+[0-9]+" \
@@ -419,10 +436,10 @@ echo "[step 10] assemble_llm_context.py     -> $STEPS_REL/llm_context.txt"
 ( cd "$LLM_SCRIPTS_DIR" && python3 assemble_llm_context.py "$RESULT_CONTAINER" ) >/dev/null
 
 # ============================================================
-# STEP 11 — Call Claude (mandatory)
+# STEP 11 — Call LLM (mandatory; backend = $LLM_BACKEND)
 # ============================================================
-echo "[step 11] call_llm.py                 -> $STEPS_REL/llm_response.json"
-( cd "$LLM_SCRIPTS_DIR" && python3 call_llm.py "$RESULT_CONTAINER" )
+echo "[step 11] $LLM_SCRIPT                 -> $STEPS_REL/llm_response.json"
+( cd "$LLM_SCRIPTS_DIR" && python3 "$LLM_SCRIPT" "$RESULT_CONTAINER" )
 
 # ============================================================
 # STEP 12 — Apply the LLM-proposed fix to Flaky/ + recompile bytecode
@@ -444,22 +461,23 @@ STEP12_OK=1
 if (( ! STEP12_OK )); then
   echo "[step 12] apply_fix.py exited non-zero — LLM patch did not land cleanly."
   echo "          See $STEPS_REL/apply_report.json for details."
-  echo "          Skipping step 13 (post-fix verification)."
+  echo "          Verdict will be FAILED (no compiled fix to verify)."
 fi
 
 # ============================================================
 # STEP 13 — Verify the LLM fix actually breaks the OD pair
 #
-# Inverse of the [sanity] block above (which asserts the Flaky variant FAILS
-# pre-fix). After step 12 patched Flaky/ and rebuilt target/test-classes,
-# we re-run the same polluter -> victim sequence against the patched
-# bytecode. Fix is verified IFF Tests>0, Failures=0, Errors=0.
+# Strict binary verdict:
+#   PASSED iff step 12 landed AND the patched Flaky/ now produces
+#          Tests>0, Failures=0, Errors=0 on the polluter -> victim sequence.
+#   FAILED in all other cases (compile failure in step 12, missing surefire
+#          summary, or any failing/erroring test).
 #
 # Same surefire invocation as step 6c (extension + SUREFIRE_VERSION +
 # runOrder=testorder) so we run on the testorder-capable Surefire fork.
 # TraceMOP attaches harmlessly — we don't read its traces here.
 # ============================================================
-VERDICT="SKIPPED"
+VERDICT="FAILED"
 if (( STEP12_OK )); then
   VERIFY_LOG="$STEPS_OUT_DIR/verify_after_fix.log"
   echo "[step 13] Re-running '${POLLUTER},${VICTIM}' against patched Flaky/  -> $STEPS_REL/verify_after_fix.log"
@@ -478,24 +496,20 @@ if (( STEP12_OK )); then
   VSUM=$(grep -E "Tests run:[[:space:]]+[0-9]+,[[:space:]]+Failures:[[:space:]]+[0-9]+,[[:space:]]+Errors:[[:space:]]+[0-9]+" \
             "$VERIFY_LOG" 2>/dev/null | tail -1 || true)
 
-  if [[ -z "$VSUM" ]]; then
-    VERDICT="UNKNOWN"
-    echo "[step 13] WARN: no Surefire summary line in verify log — verdict UNKNOWN."
-    echo "          Inspect $STEPS_REL/verify_after_fix.log for the failure mode."
-  else
+  if [[ -n "$VSUM" ]]; then
     VTESTS=$(   sed -nE 's/.*Tests run:[[:space:]]+([0-9]+).*/\1/p'   <<<"$VSUM")
     VFAIL=$(    sed -nE 's/.*Failures:[[:space:]]+([0-9]+).*/\1/p'    <<<"$VSUM")
     VERR=$(     sed -nE 's/.*Errors:[[:space:]]+([0-9]+).*/\1/p'      <<<"$VSUM")
     VTESTS=${VTESTS:-0}; VFAIL=${VFAIL:-0}; VERR=${VERR:-0}
     if (( VTESTS > 0 && VFAIL == 0 && VERR == 0 )); then
       VERDICT="PASSED"
-    else
-      VERDICT="FAILED"
     fi
     echo "[step 13] ${VSUM#*\] }"
+  else
+    echo "[step 13] No Surefire summary line in verify log — verdict FAILED."
   fi
-  printf '%s\n' "$VERDICT" > "$STEPS_OUT_DIR/verify_after_fix.verdict"
 fi
+printf '%s\n' "$VERDICT" > "$STEPS_OUT_DIR/verify_after_fix.verdict"
 
 # ============================================================
 # Summary
@@ -523,8 +537,40 @@ for f in step_8_C_official.txt llm_trace_summary.txt llm_context.txt llm_respons
 done
 echo
 echo "Post-fix verdict   : $VERDICT"
+
+# ============================================================
+# CLEANUP — remove regenerated source/trace dirs so the next run starts
+# fresh. Without this, apply_fix.py's mutations to Flaky/ persist into
+# the next invocation and the [sanity] block sees an already-fixed test
+# that no longer reproduces the failure.
+#
+# Set KEEP_SOURCE=1 to skip cleanup (e.g., to inspect the patched tree).
+#
+# KEPT:    Steps Output Files/   (research outputs — never deleted)
+#          traces-*/             (RV traces — kept for forensic inspection
+#                                 of the LLM context's RV TRACE ANALYSIS)
+#          Fixed.patch, FlakyCodeChange.patch, flaky_info.txt
+#                                  (ground truth — needed for manual review
+#                                   of LLM patches against the upstream fix)
+#          $REPROFLAKE_DIR/data/<zip>.zip  (avoids re-download next run)
+# REMOVED: Fixed/, Flaky/, FlakyCodeChange/, Flakym2/, result/
+#          (the mutated source trees — apply_fix.py edits Flaky/ and we want
+#           the next run to start from a clean unzip)
+# ============================================================
+if [[ "${KEEP_SOURCE:-0}" != "1" ]]; then
+  echo
+  echo "[cleanup] Removing mutated source dirs from $DATA_DIR/"
+  echo "          (set KEEP_SOURCE=1 next time to keep them for inspection)"
+  rm -rf "$DATA_DIR/Fixed" \
+         "$DATA_DIR/FlakyCodeChange" \
+         "$DATA_DIR/Flaky" \
+         "$DATA_DIR/Flakym2" \
+         "$DATA_DIR/result"
+  echo "[cleanup] Done. Kept: Steps Output Files/, traces-*/, Fixed.patch + FlakyCodeChange.patch + flaky_info.txt, original .zip."
+fi
+
 echo
-echo "Container '$CONTAINER' is left running for iteration."
-echo "  Open shell : docker exec -it $CONTAINER bash"
-echo "  Stop+rm    : docker rm -f $CONTAINER"
+echo "Container '$CONTAINER' is left running, but its bind mount is now mostly"
+echo "empty (cleanup ran above). It is safe and recommended to remove it:"
+echo "  docker rm -f $CONTAINER"
 echo "=========================================="

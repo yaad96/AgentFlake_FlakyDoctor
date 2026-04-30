@@ -4,14 +4,14 @@
 #
 # Materialises Fixed/ + FlakyCodeChange/, runs TraceMOP on both,
 # diffs the traces, generates the LLM trace summary, assembles the
-# final llm_context.txt, and calls Claude.
+# final llm_context.txt, and calls the chosen LLM.
 #
 # Usage:
-#   ./run_td_tracemop.sh <result_container>
+#   ./run_td_tracemop.sh <result_container> <claude|openai>
 #
 # Requires:
-#   ANTHROPIC_API_KEY in the environment (step 11 is mandatory).
-#   pip install anthropic (the call_llm.py script's only non-stdlib dep).
+#   For backend=claude: ANTHROPIC_API_KEY in the environment + pip install anthropic
+#   For backend=openai: OPENAI_API_KEY    in the environment + pip install openai
 #
 # Steps performed (output dir = data/<container>/Steps Output Files/):
 #   1.  unzip + apply Fixed.patch / FlakyCodeChange.patch
@@ -25,7 +25,7 @@
 #   8C. compare-traces-official.py       -> step_8_C_official.txt
 #   9.  generate_llm_summary.py          -> llm_trace_summary.txt
 #   10. assemble_llm_context.py          -> llm_context.txt
-#   11. call_llm.py                      -> llm_response.json
+#   11. call_llm.py / call_llm_openai.py -> llm_response.json
 #   12. apply_fix.py                     -> patches Flaky/ + recompiles bytecode
 #   13. re-run victim against patched Flaky/ -> verify_after_fix.log
 #
@@ -35,14 +35,31 @@
 set -euo pipefail
 
 # ----- args -------------------------------------------------
-RESULT_CONTAINER="${1:?Usage: $0 <result_container>   (e.g. BOOKKEEPER-846)}"
+RESULT_CONTAINER="${1:?Usage: $0 <result_container> <claude|openai>   (e.g. BOOKKEEPER-846 claude)}"
+LLM_BACKEND="${2:?Usage: $0 <result_container> <claude|openai>   (second arg picks the LLM backend)}"
 
-# ----- fail fast on missing API key (step 11 is mandatory) ---
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "ERROR: ANTHROPIC_API_KEY is not set. Step 11 (call_llm.py) requires it."
-  echo "       export ANTHROPIC_API_KEY=sk-ant-...   then re-run."
-  exit 1
-fi
+case "$LLM_BACKEND" in
+  claude)
+    LLM_SCRIPT="call_llm.py"
+    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+      echo "ERROR: ANTHROPIC_API_KEY is not set. Step 11 (call_llm.py) requires it."
+      echo "       export ANTHROPIC_API_KEY=sk-ant-...   then re-run."
+      exit 1
+    fi
+    ;;
+  openai)
+    LLM_SCRIPT="call_llm_openai.py"
+    if [[ -z "${OPENAI_API_KEY:-}" ]]; then
+      echo "ERROR: OPENAI_API_KEY is not set. Step 11 (call_llm_openai.py) requires it."
+      echo "       export OPENAI_API_KEY=sk-...   then re-run."
+      exit 1
+    fi
+    ;;
+  *)
+    echo "ERROR: backend must be 'claude' or 'openai', got '$LLM_BACKEND'."
+    exit 1
+    ;;
+esac
 
 # ----- paths ------------------------------------------------
 # Script lives in ReproFlake-C9E6/TraceMop Scripts/
@@ -279,10 +296,10 @@ echo "[step 10] assemble_llm_context.py     -> $STEPS_REL/llm_context.txt"
 ( cd "$LLM_SCRIPTS_DIR" && python3 assemble_llm_context.py "$RESULT_CONTAINER" ) >/dev/null
 
 # ============================================================
-# STEP 11 — Call Claude (mandatory)
+# STEP 11 — Call LLM (mandatory; backend = $LLM_BACKEND)
 # ============================================================
-echo "[step 11] call_llm.py                 -> $STEPS_REL/llm_response.json"
-( cd "$LLM_SCRIPTS_DIR" && python3 call_llm.py "$RESULT_CONTAINER" )
+echo "[step 11] $LLM_SCRIPT                 -> $STEPS_REL/llm_response.json"
+( cd "$LLM_SCRIPTS_DIR" && python3 "$LLM_SCRIPT" "$RESULT_CONTAINER" )
 
 # ============================================================
 # STEP 12 — Apply the LLM-proposed fix to Flaky/ + recompile bytecode
@@ -304,21 +321,23 @@ STEP12_OK=1
 if (( ! STEP12_OK )); then
   echo "[step 12] apply_fix.py exited non-zero — LLM patch did not land cleanly."
   echo "          See $STEPS_REL/apply_report.json for details."
-  echo "          Skipping step 13 (post-fix verification)."
+  echo "          Verdict will be FAILED (no compiled fix to verify)."
 fi
 
 # ============================================================
 # STEP 13 — Re-run the victim against patched Flaky/ to gauge the LLM fix
 #
-# CAVEAT: TD verification is not deterministic by nature — the test was
-# flaky to begin with, so a single passing run is necessary-but-not-sufficient
-# evidence the fix worked. Step 6c uses FlakyCodeChange/ (the bug-injected
-# variant) for tracing precisely because Flaky/ alone may pass on any given
-# run. Treat PASSED here as "the fix at least doesn't break the test"; for
-# rigorous verification, run with the project's NonDex/iteration config from
-# the CSV row.
+# Strict binary verdict:
+#   PASSED iff step 12 landed AND the patched Flaky/ runs the victim with
+#          Tests>0, Failures=0, Errors=0.
+#   FAILED in all other cases.
+#
+# CAVEAT (informational only — does not change the verdict): TD failures are
+# non-deterministic, so a single passing run is necessary-but-not-sufficient
+# evidence the fix worked. For rigorous verification, run the project's
+# NonDex/iteration config from the CSV row separately.
 # ============================================================
-VERDICT="SKIPPED"
+VERDICT="FAILED"
 if (( STEP12_OK )); then
   VERIFY_LOG="$STEPS_OUT_DIR/verify_after_fix.log"
   echo "[step 13] Re-running '${VICTIM}' against patched Flaky/  -> $STEPS_REL/verify_after_fix.log"
@@ -335,24 +354,20 @@ if (( STEP12_OK )); then
   VSUM=$(grep -E "Tests run:[[:space:]]+[0-9]+,[[:space:]]+Failures:[[:space:]]+[0-9]+,[[:space:]]+Errors:[[:space:]]+[0-9]+" \
             "$VERIFY_LOG" 2>/dev/null | tail -1 || true)
 
-  if [[ -z "$VSUM" ]]; then
-    VERDICT="UNKNOWN"
-    echo "[step 13] WARN: no Surefire summary line in verify log — verdict UNKNOWN."
-    echo "          Inspect $STEPS_REL/verify_after_fix.log for the failure mode."
-  else
+  if [[ -n "$VSUM" ]]; then
     VTESTS=$(   sed -nE 's/.*Tests run:[[:space:]]+([0-9]+).*/\1/p'   <<<"$VSUM")
     VFAIL=$(    sed -nE 's/.*Failures:[[:space:]]+([0-9]+).*/\1/p'    <<<"$VSUM")
     VERR=$(     sed -nE 's/.*Errors:[[:space:]]+([0-9]+).*/\1/p'      <<<"$VSUM")
     VTESTS=${VTESTS:-0}; VFAIL=${VFAIL:-0}; VERR=${VERR:-0}
     if (( VTESTS > 0 && VFAIL == 0 && VERR == 0 )); then
-      VERDICT="PASSED (single run; TD verdicts are non-deterministic)"
-    else
-      VERDICT="FAILED"
+      VERDICT="PASSED"
     fi
     echo "[step 13] ${VSUM#*\] }"
+  else
+    echo "[step 13] No Surefire summary line in verify log — verdict FAILED."
   fi
-  printf '%s\n' "$VERDICT" > "$STEPS_OUT_DIR/verify_after_fix.verdict"
 fi
+printf '%s\n' "$VERDICT" > "$STEPS_OUT_DIR/verify_after_fix.verdict"
 
 # ============================================================
 # Summary
@@ -380,8 +395,40 @@ for f in step_8_C_official.txt llm_trace_summary.txt llm_context.txt llm_respons
 done
 echo
 echo "Post-fix verdict   : $VERDICT"
+
+# ============================================================
+# CLEANUP — remove regenerated source/trace dirs so the next run starts
+# fresh. Without this, apply_fix.py's mutations to Flaky/ persist into
+# the next invocation and the [sanity] block sees an already-fixed test
+# that no longer reproduces the failure.
+#
+# Set KEEP_SOURCE=1 to skip cleanup (e.g., to inspect the patched tree).
+#
+# KEPT:    Steps Output Files/   (research outputs — never deleted)
+#          traces-*/             (RV traces — kept for forensic inspection
+#                                 of the LLM context's RV TRACE ANALYSIS)
+#          Fixed.patch, FlakyCodeChange.patch, flaky_info.txt
+#                                  (ground truth — needed for manual review
+#                                   of LLM patches against the upstream fix)
+#          $REPROFLAKE_DIR/data/<zip>.zip  (avoids re-download next run)
+# REMOVED: Fixed/, Flaky/, FlakyCodeChange/, Flakym2/, result/
+#          (the mutated source trees — apply_fix.py edits Flaky/ and we want
+#           the next run to start from a clean unzip)
+# ============================================================
+if [[ "${KEEP_SOURCE:-0}" != "1" ]]; then
+  echo
+  echo "[cleanup] Removing mutated source dirs from $DATA_DIR/"
+  echo "          (set KEEP_SOURCE=1 next time to keep them for inspection)"
+  rm -rf "$DATA_DIR/Fixed" \
+         "$DATA_DIR/FlakyCodeChange" \
+         "$DATA_DIR/Flaky" \
+         "$DATA_DIR/Flakym2" \
+         "$DATA_DIR/result"
+  echo "[cleanup] Done. Kept: Steps Output Files/, traces-*/, Fixed.patch + FlakyCodeChange.patch + flaky_info.txt, original .zip."
+fi
+
 echo
-echo "Container '$CONTAINER' is left running for iteration."
-echo "  Open shell : docker exec -it $CONTAINER bash"
-echo "  Stop+rm    : docker rm -f $CONTAINER"
+echo "Container '$CONTAINER' is left running, but its bind mount is now mostly"
+echo "empty (cleanup ran above). It is safe and recommended to remove it:"
+echo "  docker rm -f $CONTAINER"
 echo "=========================================="

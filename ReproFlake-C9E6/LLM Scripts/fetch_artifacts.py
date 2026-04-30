@@ -48,8 +48,28 @@ ARTIFACT_BLOCK_RE = re.compile(
     r"<ARTIFACTS_REQUESTED>(.*?)</ARTIFACTS_REQUESTED>",
     re.DOTALL | re.IGNORECASE,
 )
+
+# Canonical schema (Claude follows this reliably):
+#   <artifact type="METHOD" target="x.y.Z#m" reason="..."/>
 ARTIFACT_ITEM_RE = re.compile(
     r'<artifact\s+type="(?P<type>[A-Za-z_]+)"\s+'
+    r'target="(?P<target>[^"]+)"'
+    r'(?:\s+reason="(?P<reason>[^"]*)")?\s*/>',
+    re.IGNORECASE,
+)
+
+# Closed enum of supported artifact types (kept in sync with the prompt's
+# `Closed enum of supported types` section in assemble_llm_context.py
+# and assemble_llm_context_id.py).
+_ARTIFACT_TYPES = ("IMPORTS_OF", "FULL_FILE", "METHOD", "SPEC_DEFINITION", "POM_DEPENDENCY")
+
+# Lenient schema #1: type-as-tag-name (observed from gpt-4o):
+#   <METHOD target="x.y.Z#m" reason="..."/>
+# We accept this even though it's not the canonical form, because dropping
+# the request silently because of formatting drift loses the whole turn-2
+# round-trip. The prompt still tells the LLM to use the canonical form.
+ARTIFACT_ITEM_TYPED_TAG_RE = re.compile(
+    r"<(?P<type>" + "|".join(_ARTIFACT_TYPES) + r")\s+"
     r'target="(?P<target>[^"]+)"'
     r'(?:\s+reason="(?P<reason>[^"]*)")?\s*/>',
     re.IGNORECASE,
@@ -65,6 +85,12 @@ def parse_artifact_block(text: str):
                                 (may include checklist confirmation text)
         ("LIST",  [items, ...]) — list of {type, target, reason}
         ("ABSENT", [])          — no block at all (LLM ignored the protocol)
+
+    Tolerates two artifact-item schemas:
+      1. canonical:   <artifact type="METHOD" target="..." reason="..."/>
+      2. type-as-tag: <METHOD target="..." reason="..."/>
+    Schema 2 is what gpt-4o tends to emit on its own — accepting it
+    prevents a silent drop of the entire turn-2 artifact request.
     """
     block_match = ARTIFACT_BLOCK_RE.search(text)
     if not block_match:
@@ -75,12 +101,24 @@ def parse_artifact_block(text: str):
         return ("NONE", [])
 
     items = []
-    for m in ARTIFACT_ITEM_RE.finditer(body):
+    seen = set()  # dedup if both schemas match the same item
+
+    def _add(type_str, target, reason):
+        key = (type_str.upper(), target.strip())
+        if key in seen:
+            return
+        seen.add(key)
         items.append({
-            "type": m.group("type").upper(),
-            "target": m.group("target").strip(),
-            "reason": (m.group("reason") or "").strip(),
+            "type": type_str.upper(),
+            "target": target.strip(),
+            "reason": (reason or "").strip(),
         })
+
+    for m in ARTIFACT_ITEM_RE.finditer(body):
+        _add(m.group("type"), m.group("target"), m.group("reason"))
+    for m in ARTIFACT_ITEM_TYPED_TAG_RE.finditer(body):
+        _add(m.group("type"), m.group("target"), m.group("reason"))
+
     if items:
         return ("LIST", items)
     return ("NONE", [])
@@ -358,7 +396,17 @@ def fetch_artifacts(requests, source_base: str):
 
 
 def format_artifacts_block(results) -> str:
-    """Format the fetched artifacts as the Turn 2 user message body."""
+    """Format the fetched artifacts as the Turn 2 user message body.
+
+    Critical: this is the FINAL turn. Earlier versions of this prompt did
+    not say so explicitly, and observed LLM behaviour on hard cases was to
+    emit another <ARTIFACTS_REQUESTED> block on turn 2 instead of committing
+    to a fix. The pipeline only handles 2 turns; a third request is silently
+    captured by the response parser as 'the patch', which then fails to
+    apply because it's prose, not a diff. The framing below makes the
+    no-third-turn rule explicit and tells the LLM what to do when it would
+    otherwise punt to a third turn (state an ASSUMPTION and commit anyway).
+    """
     out = ["You requested the following artifacts. Their content is below.\n"]
     for i, r in enumerate(results, 1):
         out.append(f"=== ARTIFACT {i}: {r['type']} {r['target']} ===")
@@ -367,24 +415,38 @@ def format_artifacts_block(results) -> str:
         out.append("")
         out.append(r["content"].rstrip("\n"))
         out.append("")
-    out.append(
-        "Now produce the final fix per the OUTPUT 0 / OUTPUT A / OUTPUT B"
-    )
-    out.append(
-        "spec from the original prompt (CRITICAL DISCIPLINE, OUTPUT 0,"
-    )
-    out.append(
-        "OUTPUT A, OUTPUT B, CROSS-CHECK rules all still apply)."
-    )
+
+    out.append("=" * 60)
+    out.append("FINAL TURN — produce OUTPUT 0 / OUTPUT A / OUTPUT B now")
+    out.append("=" * 60)
     out.append("")
-    out.append(
-        "Reminder: emit EXACTLY ONE ```diff block in OUTPUT A; emit"
-    )
-    out.append(
-        "EXACTLY ONE ### ROOT_CAUSE / ### FIX_DESCRIPTION / ### FIXED_CODE"
-    )
-    out.append(
-        "section in OUTPUT B; cross-check that A and B describe the IDENTICAL"
-    )
-    out.append("set of edits before sending.")
+    out.append("This is your FINAL response. The pipeline does not support a")
+    out.append("third turn. You MUST emit OUTPUT 0, OUTPUT A, and OUTPUT B in")
+    out.append("this message.")
+    out.append("")
+    out.append("DO NOT emit another <ARTIFACTS_REQUESTED> block. If you find")
+    out.append("you still want information that isn't in the context:")
+    out.append("  - State the specific assumption explicitly in OUTPUT 0,")
+    out.append("    prefixed with 'ASSUMPTION:'.")
+    out.append("  - Make the smallest fix consistent with that assumption.")
+    out.append("  - Repeat the assumption in OUTPUT B's ### ROOT_CAUSE so a")
+    out.append("    human reviewer can spot it.")
+    out.append("A clearly-labelled best-effort fix is far more useful than")
+    out.append("another artifact request — the latter will be silently dropped")
+    out.append("and your output will be unparseable.")
+    out.append("")
+    out.append("Output spec recap (full rules in the original prompt):")
+    out.append("  - OUTPUT 0 — DIAGNOSIS: free-form chain-of-thought.")
+    out.append("  - OUTPUT A — PATCH: EXACTLY ONE ```diff fenced block.")
+    out.append("  - OUTPUT B — DEVELOPER GUIDE: EXACTLY ONE each of")
+    out.append("    ### ROOT_CAUSE, ### FIX_DESCRIPTION, ### FIXED_CODE.")
+    out.append("  - Cross-check items [1]-[6] still apply: OUTPUT A and OUTPUT B")
+    out.append("    must describe the IDENTICAL set of edits; every @@METHOD has")
+    out.append("    @@OPERATION and (for 'insert_method') @@ANCHOR.")
+    out.append("")
+    out.append("If your fix touches a file you have NOT seen via FULL_FILE,")
+    out.append("prefer the structured @@METHOD/@@OPERATION/@@ANCHOR form in")
+    out.append("OUTPUT B over relying on exact line numbers in OUTPUT A — the")
+    out.append("structured form is robust to line-number guesses; unified diffs")
+    out.append("are not.")
     return "\n".join(out)
