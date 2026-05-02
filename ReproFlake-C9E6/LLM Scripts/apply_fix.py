@@ -1099,12 +1099,40 @@ def _container_running(container: str) -> tuple:
 
 
 def recompile_in_container(container: str, modules: list) -> dict:
-    """Run `mvn test-compile` inside the docker container for the touched
-    modules. Mirrors the manual command we verified for dubbo:
+    """Run `mvn install -DskipTests` inside the docker container for the
+    touched modules. This mirrors what the per-type pipelines' STEP 6c
+    pre-build does, ensuring multi-phase build artifacts are available.
+
+    Why `install -DskipTests`, not the narrower `test-compile`:
+    Java projects with `package`-phase plugins (maven-shade-plugin to
+    produce relocated/shaded jars, antrun, exec-maven-plugin generated
+    sources, etc.) require those plugins to run BEFORE test sources can
+    compile, because some test files reference the plugins' output.
+    `mvn test-compile` only runs through the `test-compile` phase — it
+    never reaches `package`, so the shaded jars don't exist on the
+    classpath, and the test compile fails with cryptic "package X does
+    not exist" errors on completely unrelated test files.
+
+    Concrete example seen on BOOKKEEPER-846: `TestBackwardCompat.java`
+    references `org.apache.bk_v4_2_0.bookkeeper.client` — a shaded
+    backward-compat jar built by maven-shade-plugin during `package`.
+    With `mvn test-compile` the shaded jar is missing, so test-compile
+    of bookkeeper-server fails — even though the LLM's patch only
+    touched a `@Test(timeout=...)` value on a different file.
+
+    `mvn install -DskipTests` runs through the `install` lifecycle phase
+    (which includes `package`), giving every plugin a chance to produce
+    its outputs before test sources are compiled. `-DskipTests` skips
+    only test EXECUTION — `test-compile` still runs as part of the
+    lifecycle. Same recipe step 6c uses, same observed compile success.
+
+    Cost: ~30-60s slower per recompile on large projects (BookKeeper).
+    Acceptable trade-off for not silently false-failing on multi-phase
+    projects.
 
         cd /app/work/Flaky && \\
         export SUREFIRE_VERSION=3.0.0-M8-SNAPSHOT && \\
-        mvn test-compile -pl <modules> -am \\
+        mvn install -DskipTests -pl <modules> -am \\
             -Dgpg.skip=true -Dcheckstyle.skip -Drat.skip \\
             -Denforcer.skip -Dmaven.javadoc.skip
     """
@@ -1123,10 +1151,10 @@ def recompile_in_container(container: str, modules: list) -> dict:
         "-Denforcer.skip -Dmaven.javadoc.skip"
     )
     if modules == ["."]:
-        mvn_cmd = f"mvn test-compile {skip_flags}"
+        mvn_cmd = f"mvn install -DskipTests {skip_flags}"
     else:
         pl_arg = ",".join(modules)
-        mvn_cmd = f"mvn test-compile -pl {pl_arg} -am {skip_flags}"
+        mvn_cmd = f"mvn install -DskipTests -pl {pl_arg} -am {skip_flags}"
 
     bash_cmd = (
         "cd /app/work/Flaky && "
