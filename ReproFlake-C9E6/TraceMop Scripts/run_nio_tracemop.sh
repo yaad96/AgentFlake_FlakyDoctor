@@ -510,9 +510,12 @@ docker exec "$CONTAINER" bash -c "mvn install:install-file \
 # attachment (which testrunner is not).
 #
 # AUTO-GENERATED note in the wrapper itself: the LLM context script
-# (assemble_llm_context_nio.py) must NOT include the wrapper in the LLM
-# context, and apply_fix.py must NOT target it — the fix site is the
-# victim's source file, not the wrapper.
+# (assemble_llm_context_nio.py) DOES include the wrapper in the LLM
+# context — but only as a clearly-labelled READ-ONLY "WRAPPER DRIVER"
+# section so the LLM understands why a class it has never seen appears
+# at the top of the failure stack trace. The TASK section + OUTPUT spec
+# explicitly forbid the LLM from modifying it, and apply_fix.py must NOT
+# target it — the fix site is the victim's source file, not the wrapper.
 # ============================================================
 echo "[step 4c] Generating NIO wrapper class at $WRAPPER_PATH_REL"
 

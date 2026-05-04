@@ -10,8 +10,8 @@ state — i.e. there is NO separate polluter test.
 Differences from the other type-specific assemblers:
   - No POLLUTER section. TD has no polluter; the test fails on its own
     against a known-flaky codebase commit.
-  - VICTIM SOURCE CODE shows the FULL CLASS (no polluter to focus the
-    extraction onto a specific method).
+  - VICTIM TEST SOURCE CODE is method-scoped (the failing test method only;
+    the LLM can request helpers / @Before / @After via TURN 2 METHOD).
   - FAILURE OUTPUT comes from traces-flakycc/mvn.log first (the TD repro
     against the FlakyCodeChange snapshot), then traces-flaky/, then
     traces-fixed/ as a last resort.
@@ -221,7 +221,7 @@ def _three_outputs_spec_lines():
     out.append("           no collateral edits, no whitespace-only churn, no comment additions,")
     out.append("           no reformatting of nearby code.")
     out.append("       (e) Paths in the diff are relative to the project root and exist in the")
-    out.append("           VICTIM SOURCE / PRODUCTION CODE shown above. No fictitious files.")
+    out.append("           VICTIM TEST SOURCE / PRODUCTION CODE shown above. No fictitious files.")
     out.append("")
     out.append("This section is for you (the LLM) to think aloud. After OUTPUT 0 ends,")
     out.append("OUTPUT A must be FINAL — no further reasoning, retries, or redos belong")
@@ -365,16 +365,35 @@ def assemble_context_td(result_container):
 
     out = []
     out.append("=" * 60)
-    out.append("LLM CONTEXT FOR FLAKY TEST PATCH GENERATION")
+    out.append("LLM CONTEXT FOR TD FLAKY TEST PATCH GENERATION")
     out.append("=" * 60)
     out.append("")
 
     # --- TEST METADATA ---
     out.append("=== TEST METADATA ===")
-    out.append("Test type:      TD (test-dependency)")
+    out.append("Test type:      TD (Test-Dependency)")
     out.append(f"Victim:         {victim_fqn}")
     out.append(f"Module:         {module}")
     out.append(f"Java:           {java_ver}")
+    out.append("")
+    out.append("Background — what TD flakiness is:")
+    out.append("  A Test-Dependency (TD) flaky test fails non-deterministically due to")
+    out.append("  assumptions baked into the test itself — about timing bounds,")
+    out.append("  asynchronous pre-conditions, non-deterministic API behavior, or")
+    out.append("  implicit shared state the test does not initialize. Two runs of the")
+    out.append("  same test against the same source code can produce different outcomes.")
+    out.append("  Unlike OD, there is NO separate polluter test. Unlike ID, the failure")
+    out.append("  is NOT caused by JVM iteration-order shuffling. Unlike NIO, the test")
+    out.append("  does NOT need to be re-invoked in the same JVM to fail — it can fail")
+    out.append("  on its first run. In broader flaky-test research these correspond to")
+    out.append("  the \"non-order-dependent\" (NOD) category, with empirical sub-causes")
+    out.append("  including async waits, concurrency, time bounds, network/IO timing,")
+    out.append("  and randomness.")
+    out.append("")
+    out.append("  The harness reproduces the failure against a FlakyCodeChange (FlakyCC)")
+    out.append("  snapshot — the codebase commit at which the flaky behavior was first")
+    out.append("  reported in the project's issue tracker. The failure output below")
+    out.append("  comes from running the victim against that snapshot.")
     out.append("")
 
     # --- TEST CLASS HEADER ---
@@ -397,10 +416,10 @@ def assemble_context_td(result_container):
             out.append(header.rstrip())
             out.append("")
 
-    # --- VICTIM SOURCE CODE ---
+    # --- VICTIM TEST SOURCE CODE ---
     # Method-scoped extraction of the failing test. The LLM can request other
     # methods (helpers, @Before/@After) via TURN 2 METHOD if needed.
-    out.append("=== VICTIM SOURCE CODE ===")
+    out.append("=== VICTIM TEST SOURCE CODE ===")
     if source_file:
         out.append(f"File: {os.path.basename(source_file)}")
         if method_name:

@@ -5,8 +5,8 @@
 # (apply_fix.py) + step 11 (verify) up to twice:
 #   iter 1: original LLM response
 #   iter 2: only if iter 1 FAILED with a retriable category
-#           (compile_failed or test_failed) — feedback turn happens
-#           between iterations
+#           (compile_failed, test_failed, or patch_apply_failed) —
+#           feedback turn happens between iterations
 #
 # The two iterations call the SAME apply_fix.py + verify_victim. Iter 2
 # differs only in that:
@@ -118,7 +118,7 @@ CLASSIFY_PY
 )
 
     case "$fail_category" in
-      compile_failed|test_failed) ;;
+      compile_failed|test_failed|patch_apply_failed) ;;
       *)
         echo "[feedback] category=$fail_category — not retriable, finishing."
         return 0 ;;
@@ -134,10 +134,11 @@ CLASSIFY_PY
     # conditionally produced. In particular:
     #   - verify_after_fix.log only exists if verify_victim() ran, which
     #     requires step10_ok=1. When apply_fix.py fails (compile_failed
-    #     case), step10_ok=0 and verify_victim is skipped — but classify
-    #     still returns compile_failed (from apply_report.recompile.ok).
-    #     Without this guard the cp fails and set -e kills the orchestrator
-    #     mid-feedback.
+    #     OR patch_apply_failed case), step10_ok=0 and verify_victim is
+    #     skipped — but classify still returns the right category from
+    #     apply_report fields alone (recompile.ok for compile_failed,
+    #     result.ok+result.layer for patch_apply_failed). Without this
+    #     guard the cp fails and set -e kills the orchestrator mid-feedback.
     #   - llm_response.json and apply_report.json always exist (step 9 and
     #     apply_fix.py write them unconditionally), but the guard is cheap
     #     defense in depth.

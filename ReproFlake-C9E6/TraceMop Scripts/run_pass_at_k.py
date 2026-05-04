@@ -230,12 +230,12 @@ def parse_run(per_run_dir: Path, container, test_type, model, run_n):
                   + toks(t3, *OUTPUT_KEYS) + toks(t4, *OUTPUT_KEYS))
     total = in_tokens + out_tokens
 
-    # Default turns: 1/2/3/4 depending on which turn files exist.
-    # llm_response.json's turns_taken (set by call_llm scripts) takes
-    # precedence; the default fires only on malformed prior state.
-    default_turns = (4 if llm_t4.is_file() else
-                     3 if llm_t3.is_file() else
-                     2 if llm_t2.is_file() else 1)
+    # Default turns = count of per-turn files actually on disk. Slots aren't
+    # dense: a feedback round after a 1-turn initial leaves t1 + t3 (no t2),
+    # so "highest slot present" would over-count by 1. llm_response.json's
+    # turns_taken (set by call_llm scripts) takes precedence; the default
+    # fires only on malformed prior state.
+    default_turns = sum(1 for f in (llm_t1, llm_t2, llm_t3, llm_t4) if f.is_file())
     turns = resp.get("turns_taken", default_turns)
     # `(t4 or t3 or t2 or t1)` picks the latest turn that actually ran for
     # the canonical finish reason — feedback's turn4 (when artifact retrieval
@@ -318,8 +318,10 @@ def parse_run(per_run_dir: Path, container, test_type, model, run_n):
     # but that file is written by feedback_loop.sh's snapshot step (which
     # also doesn't get cleaned by the orchestrator's step 0), so a clean
     # iter-1 PASS in run N+1 would inherit run N's pre_feedback files and
-    # be falsely tagged feedback_used=yes with turns_taken=1 or 2 (impossible
-    # for a real feedback round, where turns_taken >= 3).
+    # be falsely tagged feedback_used=yes. (Note: turns_taken alone can't
+    # disambiguate — a feedback round with no-artifacts-in-turn-1 and
+    # no-artifacts-in-turn-3 produces turns_taken=2, indistinguishable from
+    # a non-feedback turn-1+turn-2 run; only the t3 file presence is reliable.)
     if llm_t3.is_file():
         feedback_used = "yes"
         if pre_verdict_file.is_file():
@@ -463,28 +465,37 @@ def collect_all_rows_on_disk(runs_root: Path, container: str, test_type: str) ->
     return rows
 
 
+_first_append_this_process = True
+
+
 def append_complete_summary(rows, rv_traces):
     """Append one row per (model, run) from THIS invocation to the
     cross-invocation log at COMPLETE_SUMMARY_FILE.
 
-    All rows from a single invocation share one timestamp so they're easy to
-    group later. The `rv_traces_used` column ('yes'/'no') records whether
-    the ablation included the RV TRACE ANALYSIS section in the LLM context
-    for this invocation.
+    The `rv_traces_used` column ('yes'/'no') records whether the ablation
+    included the RV TRACE ANALYSIS section in the LLM context for this
+    invocation.
 
     Container-level metadata other than test_type (victim FQN, polluter,
     module, java, nondex seed, etc.) is NOT duplicated here — join back to
     test_config.csv on the `container` column to look it up.
 
+    Visual separation between invocations: the FIRST call in this Python
+    process does a full rewrite (also handling any schema migration) and
+    inserts a single blank line between the prior content and this run's
+    rows. Subsequent calls in the same process append directly to the file,
+    so all rows from one run_pass_at_k.py invocation stay in one contiguous
+    block, with a blank gap before the next invocation's block. The blank
+    line is invisible to pandas (skip_blank_lines=True default) but renders
+    as a gap in spreadsheets / cat / less.
+
     Schema migration: when COMPLETE_SUMMARY_COLS gains new columns (e.g.
     Phase 5 added feedback_used / verdict_pre_feedback / feedback_category)
-    a plain append would corrupt the file's column structure. So instead of
-    appending, we always read existing rows and rewrite the file with the
-    current schema, atomically via tmp-then-rename. Old rows that lacked
-    the new columns get empty strings in those cells — interpretable by
-    pandas/csv as NaN/"". Rewriting an N-row file is O(N) per call but N
-    is hundreds, not millions; trivially fast.
+    a plain append would corrupt the file's column structure. The first-call
+    rewrite path handles this; later calls in the same process can safely
+    append because schema is stable within a single invocation.
     """
+    global _first_append_this_process
     if not rows:
         return
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -509,34 +520,76 @@ def append_complete_summary(rows, rv_traces):
             "llm_seconds": round(r["elapsed_llm_seconds"], 1),
         })
 
-    existing_rows = []
-    if COMPLETE_SUMMARY_FILE.is_file():
-        with open(COMPLETE_SUMMARY_FILE, encoding="utf-8", newline="") as f:
-            existing_rows = list(csv.DictReader(f))
+    if _first_append_this_process:
+        _first_append_this_process = False
+        # Fast path: if the on-disk header already matches the current schema,
+        # just append a blank line + new rows. This preserves blank-line
+        # separators from PRIOR invocations exactly — going through DictReader
+        # would silently drop them (csv.DictReader skips blank lines).
+        # Schema migration (full rewrite) only fires when the header differs.
+        existing_header = None
+        if COMPLETE_SUMMARY_FILE.is_file() and COMPLETE_SUMMARY_FILE.stat().st_size > 0:
+            with open(COMPLETE_SUMMARY_FILE, encoding="utf-8", newline="") as f:
+                try:
+                    existing_header = next(csv.reader(f))
+                except StopIteration:
+                    existing_header = None
 
-    # Schema rename: column "verdict" → "final verdict". Without this,
-    # extrasaction="ignore" would silently drop the old column's data on
-    # migrated rows, leaving "final verdict" empty for every pre-rename row.
-    for r in existing_rows:
-        if "verdict" in r and "final verdict" not in r:
-            r["final verdict"] = r.pop("verdict")
+        if existing_header == COMPLETE_SUMMARY_COLS:
+            # Append-with-separator path. File already in current schema.
+            with open(COMPLETE_SUMMARY_FILE, "a", encoding="utf-8", newline="") as f:
+                f.write("\n")  # blank-line separator between invocations
+                w = csv.DictWriter(
+                    f, fieldnames=COMPLETE_SUMMARY_COLS,
+                    quoting=csv.QUOTE_ALL, extrasaction="ignore",
+                )
+                for r in new_row_dicts:
+                    w.writerow(r)
+        else:
+            # Schema migration path: full rewrite via tmp+rename. Rare event
+            # (only when COMPLETE_SUMMARY_COLS gains/renames columns). Blank
+            # line separators from prior invocations are LOST during this
+            # rewrite because DictReader skips them; they accumulate again
+            # for subsequent invocations. Acceptable for a rare migration.
+            existing_rows = []
+            if COMPLETE_SUMMARY_FILE.is_file():
+                with open(COMPLETE_SUMMARY_FILE, encoding="utf-8", newline="") as f:
+                    existing_rows = list(csv.DictReader(f))
 
-    tmp_path = COMPLETE_SUMMARY_FILE.with_suffix(COMPLETE_SUMMARY_FILE.suffix + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8", newline="") as f:
-        w = csv.DictWriter(
-            f, fieldnames=COMPLETE_SUMMARY_COLS,
-            quoting=csv.QUOTE_ALL, extrasaction="ignore",
-        )
-        w.writeheader()
-        for r in existing_rows:
-            w.writerow(r)   # missing keys → empty cells; extras dropped
-        for r in new_row_dicts:
-            w.writerow(r)
-    tmp_path.replace(COMPLETE_SUMMARY_FILE)
+            # Schema rename: column "verdict" → "final verdict". Without this,
+            # extrasaction="ignore" would silently drop the old column's data
+            # leaving "final verdict" empty for every pre-rename row.
+            for r in existing_rows:
+                if "verdict" in r and "final verdict" not in r:
+                    r["final verdict"] = r.pop("verdict")
+
+            tmp_path = COMPLETE_SUMMARY_FILE.with_suffix(COMPLETE_SUMMARY_FILE.suffix + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8", newline="") as f:
+                w = csv.DictWriter(
+                    f, fieldnames=COMPLETE_SUMMARY_COLS,
+                    quoting=csv.QUOTE_ALL, extrasaction="ignore",
+                )
+                w.writeheader()
+                for r in existing_rows:
+                    w.writerow(r)
+                if existing_rows:
+                    f.write("\n")  # separator before this invocation's rows
+                for r in new_row_dicts:
+                    w.writerow(r)
+            tmp_path.replace(COMPLETE_SUMMARY_FILE)
+    else:
+        # Subsequent calls in the same process: plain append, no separator,
+        # no rewrite. Schema is stable within one invocation so this is safe.
+        with open(COMPLETE_SUMMARY_FILE, "a", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(
+                f, fieldnames=COMPLETE_SUMMARY_COLS,
+                quoting=csv.QUOTE_ALL, extrasaction="ignore",
+            )
+            for r in new_row_dicts:
+                w.writerow(r)
 
     print(f"[wrapper] appended {len(rows)} row(s) to "
-          f"{COMPLETE_SUMMARY_FILE.name}  "
-          f"(total: {len(existing_rows) + len(new_row_dicts)} rows)")
+          f"{COMPLETE_SUMMARY_FILE.name}")
 
 
 def write_summary(rows, runs_root: Path, container, row_meta, runs_per_model):
@@ -676,6 +729,23 @@ def main():
                 shutil.rmtree(per_run_dir, ignore_errors=True)
             per_run_dir.mkdir(parents=True, exist_ok=True)
 
+            # Wipe dynamic outputs from data/<container>/ so this run's
+            # artifacts can't be confused with the previous run's. The per-type
+            # script's "step 0" only cleans mutated source dirs (Fixed/, Flaky/,
+            # etc.) and explicitly KEEPS Steps Output Files/ + traces-*/ +
+            # result/ across runs — fine for human debugging, but if the next
+            # run fails before regenerating those (e.g. mvn build dies at
+            # step 4a), archive_run would copy the prior run's outputs into
+            # the current per-run dir and parse_run would tag them as this
+            # run's data. The bug: an early-failed openai run picked up the
+            # preceding claude run's PASSED verdict + token counts verbatim.
+            for stale in ("Steps Output Files", "result",
+                          "traces-fixed", "traces-flaky", "traces-flakycc",
+                          "traces-pass", "traces-fail"):
+                stale_path = data_container_dir / stale
+                if stale_path.is_dir():
+                    shutil.rmtree(stale_path, ignore_errors=True)
+
             print(f"[wrapper] === starting {model}/run {run_n} ===")
             t0 = time.time()
             pipeline_log = per_run_dir / "pipeline.log"
@@ -712,9 +782,20 @@ def main():
             # Archive (sources first, Steps Output Files last; sentinel last of all)
             archive_run(data_container_dir, per_run_dir)
 
-            # If verdict missing after the run, write INCOMPLETE
+            # Defense-in-depth: if the per-type script exited non-zero, force
+            # INCOMPLETE regardless of what's on disk. The pre-run wipe above
+            # already prevents stale-data inheritance from the previous run,
+            # but a script that crashes AFTER writing its own verdict.PASSED
+            # (e.g., a sanity-check failure later in step 13) would otherwise
+            # have its truncated state trusted. exit_code == 0 is the only
+            # signal that the full pipeline ran end-to-end.
             v_file = per_run_dir / "Steps Output Files" / "verify_after_fix.verdict"
-            if not v_file.is_file():
+            if exit_code != 0:
+                v_file.parent.mkdir(parents=True, exist_ok=True)
+                v_file.write_text("INCOMPLETE\n")
+            elif not v_file.is_file():
+                # Script exited 0 but no verdict was written (shouldn't happen
+                # — verify step always writes one — but guard anyway).
                 v_file.parent.mkdir(parents=True, exist_ok=True)
                 v_file.write_text("INCOMPLETE\n")
 

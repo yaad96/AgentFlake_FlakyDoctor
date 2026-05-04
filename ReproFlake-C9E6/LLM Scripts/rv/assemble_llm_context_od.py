@@ -9,8 +9,8 @@ test that runs immediately before the victim and corrupts shared state.
 Differences from the other type-specific assemblers:
   - INCLUDES a POLLUTER SOURCE CODE section (the test that sets up the bad
     state). Neither ID, NIO, nor TD have this.
-  - VICTIM SOURCE CODE is method-scoped (since the polluter pinpoints which
-    method to focus on); the other assemblers tend to show the full class.
+  - VICTIM TEST SOURCE CODE is method-scoped (since the polluter pinpoints
+    which method to focus on).
   - FAILURE OUTPUT comes from traces-flakycc/mvn.log first (TD-style fix
     eval ordering), then traces-flaky/mvn.log (the polluter→victim run).
   - TASK section is OD-framed: cleanup in polluter / setup in victim /
@@ -224,7 +224,7 @@ def _three_outputs_spec_lines():
     out.append("           no collateral edits, no whitespace-only churn, no comment additions,")
     out.append("           no reformatting of nearby code.")
     out.append("       (e) Paths in the diff are relative to the project root and exist in the")
-    out.append("           VICTIM SOURCE / PRODUCTION CODE shown above. No fictitious files.")
+    out.append("           VICTIM TEST SOURCE / PRODUCTION CODE shown above. No fictitious files.")
     out.append("")
     out.append("This section is for you (the LLM) to think aloud. After OUTPUT 0 ends,")
     out.append("OUTPUT A must be FINAL — no further reasoning, retries, or redos belong")
@@ -380,7 +380,7 @@ def assemble_context_od(result_container):
 
     out = []
     out.append("=" * 60)
-    out.append("LLM CONTEXT FOR FLAKY TEST PATCH GENERATION")
+    out.append("LLM CONTEXT FOR OD/BRITTLE FLAKY TEST PATCH GENERATION")
     out.append("=" * 60)
     out.append("")
 
@@ -392,6 +392,24 @@ def assemble_context_od(result_container):
     out.append(f"Victim:         {victim_fqn}")
     out.append(f"Module:         {module}")
     out.append(f"Java:           {java_ver}")
+    out.append("")
+    out.append("Background — what OD/BRITTLE flakiness is:")
+    out.append("  An Order-Dependent (OD) flaky test passes when run in isolation but")
+    out.append("  fails when run after another test (the \"polluter\") that mutates")
+    out.append("  shared state in a way the victim does not expect — typically a")
+    out.append("  static field, singleton, registry, system property, file, or other")
+    out.append("  process-global slot. A BRITTLE test follows the same pattern; the")
+    out.append("  separate label is used when the dependency is fragile or harder to")
+    out.append("  classify cleanly as a hard pollution. Unlike TD, the failure is NOT")
+    out.append("  rooted in the test's own assumptions about timing or async. Unlike")
+    out.append("  ID, no JVM iteration-order shuffling is involved. Unlike NIO, the")
+    out.append("  test does not pollute itself across invocations — pollution comes")
+    out.append("  from a separate test that ran earlier.")
+    out.append("")
+    out.append("  The harness reproduces the failure by running the polluter")
+    out.append("  immediately before the victim within the same JVM against the")
+    out.append("  FlakyCodeChange snapshot. The failure output below comes from that")
+    out.append("  paired execution.")
     out.append("")
 
     # --- TEST CLASS HEADER ---
@@ -462,11 +480,11 @@ def assemble_context_od(result_container):
             out.append(f"(Source file not found for {polluter_fqn})")
         out.append("")
 
-    # --- VICTIM SOURCE CODE ---
+    # --- VICTIM TEST SOURCE CODE ---
     rel_path, method_name = fqn_to_path(victim_fqn)
     source_file = find_source_file(source_base, module, rel_path)
 
-    out.append("=== VICTIM SOURCE CODE ===")
+    out.append("=== VICTIM TEST SOURCE CODE ===")
     if source_file:
         if method_name:
             method_src = extract_java_method(source_file, method_name)
