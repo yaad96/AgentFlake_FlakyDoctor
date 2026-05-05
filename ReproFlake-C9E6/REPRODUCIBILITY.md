@@ -1,9 +1,10 @@
 # Reproducibility Guide
 
-This guide describes the procedure for reproducing any flaky-test container
-listed in [test_config.csv](test_config.csv) on a host that has only Docker
-installed. Container `jnrposixd9f3f84` is used as a worked example throughout;
-the same procedure applies to every other entry in the CSV.
+This guide describes the procedure for reproducing the supported flaky-test
+containers listed in [test_config.csv](test_config.csv) on a Docker-capable
+host. Container `jnrposixd9f3f84` is used as a worked example throughout; the
+same procedure applies to entries whose `test_type` is `od`, `td`, `id`, or
+`nio`.
 
 ---
 
@@ -29,8 +30,10 @@ The CSV row used as the worked example is:
 
 The `test_type` field selects the orchestrator script (`od` →
 [run_od_tracemop.sh](TraceMop%20Scripts/run_od_tracemop.sh); `td`, `id`, and
-`nio` exist for the other types). The `java` field selects the Docker image.
-Both are resolved from the CSV automatically by
+`nio` map to their matching `run_<type>_tracemop.sh` scripts). The current
+pass@k wrapper does not route the `britle` or `unclassified` rows in the CSV.
+The `java` field selects the Docker image. Both are resolved from the CSV
+automatically by
 [run_pass_at_k.py](TraceMop%20Scripts/run_pass_at_k.py); only the
 `result_container` value is supplied on the command line.
 
@@ -61,9 +64,10 @@ credentials:
 | `patch` | applies `Fixed.patch` |
 | `curl` *(or `wget`)* | downloads the dataset archive on first use |
 | `git` | clones the repository |
-| `ANTHROPIC_API_KEY` *and* `OPENAI_API_KEY` | the LLM step is mandatory; the pipeline aborts when the key for the selected backend is unset |
+| `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` | the LLM step is mandatory; the pipeline aborts when the key for the selected backend is unset. The default `--models claude,openai` run requires both keys. |
 
-All remaining build-time dependencies — JDK 8/11, Maven 3.8.6, the
+All remaining build-time dependencies — the selected JDK 8/11/17 image,
+Maven 3.8.6, the
 TestingResearchIllinois Surefire fork (`3.0.0-M8-SNAPSHOT`), `xmlstarlet`,
 `beautifulsoup4`, and `lxml` — are baked into the Docker image and require no
 host-side installation.
@@ -126,7 +130,9 @@ create and activate the virtual environment as shown above.
 
 ### 3.3 API keys
 
-Set both API keys in the current shell:
+Set API keys in the current shell. The default command in this guide runs both
+backends, so it needs both keys; a one-backend run only needs that backend's
+key.
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
@@ -197,8 +203,10 @@ ls -l ../scripts/events_encoding_id.txt
 ```
 
 All three artifacts are checked into the repository, so a complete clone is
-sufficient and no additional downloads are required. If any of the three is
-missing, the pipeline aborts at step 3 or 4.
+sufficient for these host-side inputs. The dataset archive is still downloaded
+on first use, and Docker image builds may download their own build-time
+dependencies. If any of the three host-side inputs is missing, the pipeline
+aborts at step 3, 4a, or 5.
 
 ---
 
@@ -217,9 +225,10 @@ source ~/.venvs/reproflake/bin/activate    # if not already active in the curren
     --runs 3
 ```
 
-To reproduce a different container, substitute its `result_container` value
-from `test_config.csv`. All remaining parameters (`test_type`, `module`,
-`java`, `polluter`, `victim`, dataset URL) are read from the CSV automatically.
+To reproduce a different supported container, substitute its `result_container`
+value from `test_config.csv`. All remaining parameters (`test_type`, `module`,
+`java`, `polluter`, `victim`, dataset URL) are read from the CSV
+automatically.
 
 ### 5.1 Argument reference
 
@@ -229,6 +238,10 @@ from `test_config.csv`. All remaining parameters (`test_type`, `module`,
 | `--rv-traces yes\|no` | required. `yes` runs the full pipeline, including the RV trace section in the LLM prompt; output is archived under `data/FULL RUNS: RV/`. `no` runs the ablation that omits the RV section; output is archived under `data/FULL RUNS: NO RV/`. |
 | `--models claude,openai` | comma-separated list of LLM backends to invoke. The default is `claude,openai`. Pass `claude` or `openai` alone to skip the other. |
 | `--runs N` | number of runs per backend. The default is 3. |
+
+Each invocation clears and re-runs the requested `(model, run)` folders before
+archiving fresh results, so reusing the same command intentionally overwrites
+those per-run archives.
 
 ### 5.2 First-run timing
 
@@ -246,7 +259,7 @@ complete.
 
 Two LLM backends are supported:
 
-- `claude` — Anthropic `claude-sonnet-4-6` ([call_llm_claude.py:36](LLM%20Scripts/call_llm_claude.py#L36)). Requires `ANTHROPIC_API_KEY`.
+- `claude` — Anthropic `claude-sonnet-4-6` ([call_llm_claude.py:38](LLM%20Scripts/call_llm_claude.py#L38)). Requires `ANTHROPIC_API_KEY`.
 - `openai` — OpenAI `gpt-4o` ([call_llm_openai.py:37](LLM%20Scripts/call_llm_openai.py#L37)). Requires `OPENAI_API_KEY`.
 
 Per-run token counts and wall-clock time are recorded in `summary.csv` and in
@@ -256,8 +269,9 @@ the top-level `Complete Containers Summary.csv`.
 
 ## 6. Result layout
 
-All artifacts produced by an invocation are written under `data/`. The
-per-container layout is:
+Per-run artifacts produced by an invocation are archived under `data/`; the
+cross-invocation `Complete Containers Summary.csv` is written at the
+`ReproFlake-C9E6/` root. The key per-container layout is:
 
 ```
 ReproFlake-C9E6/
@@ -271,7 +285,10 @@ ReproFlake-C9E6/
             │   │   ├── pipeline.log              # complete stdout of the orchestrator
             │   │   ├── Steps Output Files/
             │   │   │   ├── llm_context.txt           # prompt sent to the LLM
-            │   │   │   ├── llm_response.json         # diagnosis and patch
+            │   │   │   ├── llm_response.json         # parsed final diagnosis and patch
+            │   │   │   ├── llm_response_turn*.json   # raw per-turn responses, when present
+            │   │   │   ├── llm_conversation.json     # saved conversation for feedback turns
+            │   │   │   ├── llm_artifacts_turn*.txt   # fetched artifacts, when requested
             │   │   │   ├── apply_report.json         # patch application report
             │   │   │   ├── verify_after_fix.log      # Surefire output from the post-fix test run
             │   │   │   └── verify_after_fix.verdict  # PASSED, FAILED, or INCOMPLETE
@@ -299,24 +316,47 @@ Three files address the most common questions:
 
 ---
 
-## 7. Troubleshooting
+## 7. Script file reference
 
-The most common failure modes and their resolutions:
+Because this artifact integrates Valg with ReproFlake, we have added 25
+source scripts under the two directories below. These scripts drive trace
+collection, prompt construction, LLM repair, patch application, verification,
+and result aggregation.
 
-| Symptom | Resolution |
+### 7.1 `LLM Scripts/`
+
+| file | description |
 |---|---|
-| `ERROR: Docker daemon not reachable` | Start Docker Desktop (macOS) or `dockerd` (Linux) and retry. |
-| `ERROR: ANTHROPIC_API_KEY env var not set` (or `OPENAI_API_KEY`) | Export the API key for the backend specified in `--models`. |
-| `ERROR: container '<name>' not in CSV` | Verify that `result_container` matches the CSV value exactly (for example, `jnrposixd9f3f84`, not `jnrposix`). |
-| `ERROR: …/experiments/tracemop.jar not found` | The repository was cloned partially. Re-clone the full repository and run from `<cloned-dir>/ReproFlake-C9E6/`. |
-| `ModuleNotFoundError: No module named 'anthropic'` (or `'openai'`) | The virtual environment is not active in the current shell. Run `source ~/.venvs/reproflake/bin/activate` and retry. |
-| `error: externally-managed-environment` from `pip install` | The virtual environment was bypassed. Python 3.12 and later prohibit system-wide pip installs. Follow Section 3 to create and activate a virtual environment. |
-| `ERROR: Flaky run had Failures=0, Errors=0` | TraceMOP failed to attach, or the Surefire fork was not honoured. Inspect `data/<container>/traces-flaky/mvn.log` for `[TraceMOP]` lines and for any `Changed surefire version to ...` warning. |
-| All runs report verdict `INCOMPLETE` | The per-type script exited non-zero before writing a verdict; the orchestrator records `INCOMPLETE` in this case. Consult `pipeline.log` in the affected per-run directory to identify the underlying failure. |
-| First invocation appears to hang for ~10 minutes with no output | Expected behaviour. The one-time Docker image build is in progress. Monitor progress with `docker images` from a separate terminal. |
-| Pipeline runs but no LLM call is observed | Confirm that the API key was exported in the current shell and that `python3 -c "import anthropic"` (or `openai`) succeeds inside the active virtual environment. |
+| `LLM Scripts/apply_fix.py` | Applies the fix stored in `llm_response.json` to the container's `Flaky/` source tree. It first tries the unified diff from `OUTPUT A`, then falls back to the structured `OUTPUT B` splicer, and records compile/recompile diagnostics in `apply_report.json`. |
+| `LLM Scripts/assemble_llm_context.py` | Shared helper module for all per-type prompt assemblers. It loads CSV metadata, reads files with fallback encodings, extracts Java methods/class structure, parses failure logs, and finds production code mentioned in stack traces. |
+| `LLM Scripts/build_feedback.py` | Builds the `feedback_payload.txt` user turn for a second LLM attempt after a retriable failure. It formats category-specific feedback for `compile_failed`, `test_failed`, and `patch_apply_failed` using `apply_report.json` and, when needed, `verify_after_fix.log`. |
+| `LLM Scripts/call_llm.py` | Backend dispatcher used by the shell orchestrators. It selects either the Claude or OpenAI caller from the `<claude\|openai>` argument and forwards optional feedback-turn arguments. |
+| `LLM Scripts/call_llm_claude.py` | Sends `llm_context.txt` to Anthropic Claude and writes the parsed response to `llm_response.json`. It also supports the feedback round by replaying `llm_conversation.json`, appending `feedback_payload.txt`, and overwriting `llm_response.json` with the corrected final response. |
+| `LLM Scripts/call_llm_openai.py` | Sends `llm_context.txt` to OpenAI `gpt-4o` and writes the parsed response to `llm_response.json`. Like the Claude caller, it can resume the saved conversation for a feedback turn and accumulates token usage metadata. |
+| `LLM Scripts/fetch_artifacts.py` | Implements the closed-enum artifact retrieval protocol used between LLM turns. It parses `<ARTIFACTS_REQUESTED>` blocks and returns imports, file skeletons, method bodies, and source ranges from the target project, or MOP spec definitions from Valg's spec library. |
+| `LLM Scripts/generate_llm_summary.py` | Converts the raw trace comparison in `step_8_C_official.txt` into `llm_trace_summary.txt`. It decodes event IDs, summarizes flaky-only/clean-only traces, reports frequency differences, and surfaces source-location mismatches for the prompt. |
+| `LLM Scripts/patch_compare.py` | Patches the copied `/tmp/compare-traces-official.py` inside the container to tolerate malformed or non-numeric location IDs. This keeps trace comparison from crashing on imperfect TraceMOP location rows. |
+| `LLM Scripts/response_parser.py` | Provider-neutral parser for the required `OUTPUT 0`, `OUTPUT A`, and `OUTPUT B` response format. It extracts diagnosis text, the unified diff, root-cause/fix-description text, and structured `@@FILE`/`@@METHOD` fixed-code entries. |
+| `LLM Scripts/rv/assemble_llm_context_id.py` | Builds the RV-enabled LLM prompt for ID flaky tests. It omits polluter context, uses NonDex failure output, includes RV trace analysis, and frames fixes around deterministic collection/map/set ordering. |
+| `LLM Scripts/rv/assemble_llm_context_nio.py` | Builds the RV-enabled LLM prompt for NIO flaky tests. It includes the generated run-twice wrapper, explains the NIO cleanup pattern, adds RV trace analysis with an empty-trace caveat, and forbids patching the wrapper. |
+| `LLM Scripts/rv/assemble_llm_context_od.py` | Builds the RV-enabled LLM prompt for OD and brittle tests. It includes both polluter and victim source context, failure output, production stack context, RV trace analysis, and a task framing around shared-state cleanup or defensive setup. |
+| `LLM Scripts/rv/assemble_llm_context_td.py` | Builds the RV-enabled LLM prompt for TD flaky tests. It focuses on the victim method, failure output, related production code, RV trace analysis, and likely timing/asynchrony/determinism fixes. |
+| `LLM Scripts/no_rv/assemble_llm_context_id.py` | Builds the ID ablation prompt without the RV trace-analysis section. It keeps the same NonDex and ordering-focused task framing as the RV version so the experiment isolates the effect of RV trace evidence. |
+| `LLM Scripts/no_rv/assemble_llm_context_nio.py` | Builds the NIO ablation prompt without RV trace evidence or the RV empty-trace caveat. It still includes the generated wrapper and the self-pollution cleanup framing used to repair NIO tests. |
+| `LLM Scripts/no_rv/assemble_llm_context_od.py` | Builds the OD/brittle ablation prompt without RV trace analysis or RV spec-definition guidance. It preserves the polluter/victim source context and shared-state task framing from the RV version. |
+| `LLM Scripts/no_rv/assemble_llm_context_td.py` | Builds the TD ablation prompt without RV trace analysis or RV spec-definition guidance. It keeps the victim-focused TD prompt structure so results can be compared directly against the RV-enabled version. |
 
----
+### 7.2 `TraceMop Scripts/`
+
+| file | description |
+|---|---|
+| `TraceMop Scripts/compare-traces-official.py` | Compares two TraceMOP trace directories using `locations.txt`, `unique-traces.txt`, and `events_encoding_id.txt`. It reports location mismatches, traces missing from either side, and trace-frequency differences for downstream summarization. |
+| `TraceMop Scripts/feedback_loop.sh` | Shared shell helper sourced by the per-type orchestrators after the first LLM fix attempt. It runs `apply_fix.py` plus per-type verification up to two times, classifies retriable failures, requests feedback from the LLM, and restores `Flaky/` from `Flaky.pristine` before reapplying. |
+| `TraceMop Scripts/run_id_tracemop.sh` | End-to-end orchestrator for ID flaky tests. It runs a passing baseline and a NonDex seeded failing run under TraceMOP, compares traces, generates the LLM prompt, calls the selected backend, applies the patch, and verifies with the same NonDex seed. |
+| `TraceMop Scripts/run_nio_tracemop.sh` | End-to-end orchestrator for NIO flaky tests. It generates a JUnit wrapper that runs the victim twice in one JVM, traces Fixed and Flaky wrapper executions, prompts the LLM, applies the fix, and verifies that the patched wrapper passes both invocations. |
+| `TraceMop Scripts/run_od_tracemop.sh` | End-to-end orchestrator for OD flaky tests. It runs the polluter and victim in deterministic order on Fixed and Flaky variants, collects and compares TraceMOP traces, invokes the LLM repair flow, and verifies the patched Flaky variant with the same ordered test run. |
+| `TraceMop Scripts/run_pass_at_k.py` | Batch wrapper for repeated experiments across models and runs. It selects the correct per-type orchestrator from `test_config.csv`, toggles the RV/no-RV prompt ablation, archives each run, computes pass-at-k summaries, and appends the top-level completion CSV. |
+| `TraceMop Scripts/run_td_tracemop.sh` | End-to-end orchestrator for TD flaky tests. It materializes Fixed and FlakyCodeChange variants, traces both, compares runtime behavior, assembles the TD prompt, calls the LLM, applies the patch, and verifies the patched victim test. |
 
 ## 8. Summary of commands
 
@@ -325,7 +365,11 @@ The complete command sequence for a fresh host (worked example
 
 ```bash
 # (one-time) Install host tools
-sudo apt-get install -y python3 python3-pip python3-venv unzip patch curl git    # macOS: xcode-select --install
+# Ubuntu/Debian:
+sudo apt-get install -y python3 python3-pip python3-venv unzip patch curl git
+# macOS:
+# xcode-select --install
+
 python3 -m venv ~/.venvs/reproflake
 source ~/.venvs/reproflake/bin/activate
 pip install --upgrade pip
@@ -346,10 +390,40 @@ source ~/.venvs/reproflake/bin/activate
 
 # Inspect the verdict and aggregate
 cat "data/FULL RUNS: RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
-open "data/FULL RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
+head -5 "data/FULL RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
 ```
 
 ## 9. Log of jnrposix
+
+The jnrposix example is an OD run, so the numbered log steps are primarily
+owned by [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh). Section
+7 gives one-file descriptions; the table below maps the visible log steps to
+their purpose and the scripts involved.
+
+| log step | purpose | script reference |
+|---|---|---|
+| `step 0` | Optional start-of-run cleanup that removes stale materialized source directories from a previous run while keeping logs/traces for inspection. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh) |
+| `step 1a`/`step 1b`/`step 1c` | Download and unzip the Zenodo container archive, then materialize `Fixed/` and `Flaky/` from the archive and `Fixed.patch`; `step 1c` appears only when those directories already exist. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh) |
+| `step 2` | Start the Docker container for the required Java version and mount the container data directory into it. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh) |
+| `step 3` | Copy `experiments/tracemop.jar` into the running container so the Maven run can attach TraceMOP. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh) |
+| `step 4a`/`step 4b` | Build the JavaMOP Maven extension inside the container and install `tracemop.jar` into the container's local Maven repository. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh) |
+| `step 4d` | Run the OD polluter and victim tests under TraceMOP on both `Fixed/` and `Flaky/`, producing `traces-fixed/` and `traces-flaky/`. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh) |
+| `step 5` | Prepare trace-comparison tooling in the container, including the local `compare-traces-official.py` copy and its compatibility patch. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh), [`patch_compare.py`](LLM%20Scripts/patch_compare.py) |
+| `step 6` | Compare failing-run traces against passing-run traces and write the raw diff report to `step_8_C_official.txt`. | [`compare-traces-official.py`](TraceMop%20Scripts/compare-traces-official.py) |
+| `step 7` | Decode and summarize the raw trace comparison into `llm_trace_summary.txt` for the LLM prompt. | [`generate_llm_summary.py`](LLM%20Scripts/generate_llm_summary.py) |
+| `step 8` | Assemble `llm_context.txt`, including OD-specific polluter/victim context and, for this RV run, the RV trace-analysis section. | [`rv/assemble_llm_context_od.py`](LLM%20Scripts/rv/assemble_llm_context_od.py) |
+| `step 9` | Send the assembled prompt to the selected LLM backend and save the parsed response as `llm_response.json`. | [`call_llm.py`](LLM%20Scripts/call_llm.py), [`call_llm_claude.py`](LLM%20Scripts/call_llm_claude.py), [`response_parser.py`](LLM%20Scripts/response_parser.py) |
+| `step 9.5` | Snapshot the pristine `Flaky/` tree so a feedback retry can restore it before applying a corrected patch. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh), [`feedback_loop.sh`](TraceMop%20Scripts/feedback_loop.sh) |
+| `step 10` | Apply the LLM-produced fix to `Flaky/`, then compile/recompile touched code and write `apply_report.json`. | [`feedback_loop.sh`](TraceMop%20Scripts/feedback_loop.sh), [`apply_fix.py`](LLM%20Scripts/apply_fix.py) |
+| `step 11` | Re-run the OD polluter/victim order against patched `Flaky/` and write `verify_after_fix.log` plus `verify_after_fix.verdict`. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh), [`feedback_loop.sh`](TraceMop%20Scripts/feedback_loop.sh) |
+| optional feedback retry | If the first patch fails to apply, compile, or pass verification, build a feedback prompt, ask the same LLM for a corrected patch, restore `Flaky/`, and repeat steps 10-11 once. | [`feedback_loop.sh`](TraceMop%20Scripts/feedback_loop.sh), [`build_feedback.py`](LLM%20Scripts/build_feedback.py), [`call_llm.py`](LLM%20Scripts/call_llm.py) |
+| final summary | Print trace directories, output file sizes, and the final post-fix verdict. If invoked through pass@k, the wrapper archives this run and updates `summary.csv`. | [`run_od_tracemop.sh`](TraceMop%20Scripts/run_od_tracemop.sh), [`run_pass_at_k.py`](TraceMop%20Scripts/run_pass_at_k.py) |
+
+`run_pass_at_k.py` sets `KEEP_CONTAINER=1` while each per-run orchestrator is
+executing so the same container can be reused within the batch. Unless
+`--keep-workspace` is passed to `run_pass_at_k.py`, the wrapper removes that
+container and the scratch `data/<container>/` workspace after the batch has
+been archived.
 
 The complete log of jnrposix:
 
