@@ -1,84 +1,242 @@
 # Reproducibility Guide
 
-This guide describes the procedure for reproducing the supported flaky-test
-containers listed in [test_config.csv](test_config.csv) on a Docker-capable
-host. Container `jnrposixd9f3f84` is used as a worked example throughout; the
-same procedure applies to entries whose `test_type` is `od`, `td`, `id`, or
-`nio`.
+This guide reproduces the SWE 699 project pipeline. There are two
+reproduction modes documented below: **replay mode** (Section 2, no API
+key) and **live mode** (Section 3, requires Claude and OpenAI API keys).
+Container `jnrposixd9f3f84` is used as the worked example throughout;
+the same procedure applies to every entry in
+[test_config.csv](test_config.csv).
 
-Also this contains the 1-2 sentences description of each artefact (code and script files) that we created along with a complete log of one run of `jnrposixd9f3f84`
+This guide also contains a 1-2 sentence description of each artifact
+(script files) we authored as part of this project (Section 7), plus a
+complete log of one live-mode run of `jnrposixd9f3f84` (Section 8).
 
 ---
 
-## 0. TLDR; Summary of commands
+## 1. Repository and data layout
 
-The complete command sequence for a worked example
-`jnrposixd9f3f84`:
+### 1.1 What gets cloned
+
+Cloning the public repo produces a directory with three top-level entries
+that the reproducibility pipeline relies on:
+
+```
+<cloned-dir>/                            # GitHub clone target — name varies by URL
+├── experiments/
+│   └── tracemop.jar                     # ~19 MB; copied into the docker container at step 3
+├── scripts/
+│   ├── javamop-extension/               # Maven Surefire extension; built inside the container at step 4a
+│   └── events_encoding_id.txt           # event-ID dictionary used by the trace summarizer
+└── ReproFlake-C9E6/                     # the rest of the artifact — you cd here to run anything
+    ├── Reproducibility Guide.md         # this file
+    ├── test_config.csv                  # one row per supported container; consumed by the orchestrator
+    ├── Dockerfile, Dockerfile.id,       # base images (JDK 8 / 11 / 17 variants)
+    │   Dockerfile.od, …
+    ├── LLM Scripts/                     # Python: prompt assembly, LLM dispatcher + backends, response parser
+    ├── TraceMop Scripts/                # bash + Python: per-test-type orchestrators + pass@k wrappers
+    └── data/                            # all per-container runtime state (input + output + archives)
+```
+
+After `cd <cloned-dir>/ReproFlake-C9E6` every command in this guide is run
+from there.
+
+Since Valg and ReproFlake are authored by other people, the new scripts we
+introduced as part of this artifact live under `ReproFlake-C9E6/LLM Scripts/`
+and `ReproFlake-C9E6/TraceMop Scripts/`. Section 7 (Script reference) only
+covers those new files.
+
+### 1.2 Where data lives
+
+All runtime state lives under `ReproFlake-C9E6/data/`. There are four
+distinct kinds of subdirectory:
+
+```
+ReproFlake-C9E6/data/
+├── <container>.zip                      # INPUT  — dataset, downloaded on first use from Zenodo
+├── <container>/                         # SCRATCH — workspace; wiped between runs (unless --keep-workspace)
+├── FULL RUNS: RV/                       # ARCHIVE — pre-recorded LLM responses from the live runs (RV ablation)
+│   └── <container> runs/
+│       ├── summary.csv
+│       ├── Claude/run 1/Steps Output Files/llm_response_turn1.json …
+│       └── OpenAI/run 1/Steps Output Files/llm_response_turn1.json …
+├── FULL RUNS: NO RV/                    # ARCHIVE — same shape, no-RV ablation
+└── SIMULATED RUNS: RV/, : NO RV/        # OUTPUT  — populated by replay mode; same layout as FULL RUNS
+```
+
+The two `FULL RUNS:` archives are the source of truth for replay mode and
+must be present before Section 2 will work. They are NOT in the git repo
+because they total ~2.5 GB; see Section 1.3.
+
+### 1.3 Populating the archives
+
+The archive bundle is hosted on OneDrive:
+[OneDrive: flakyrvlogs](https://gmuedu-my.sharepoint.com/personal/mpious_gmu_edu/_layouts/15/onedrive.aspx?id=%2Fpersonal%2Fmpious%5Fgmu%5Fedu%2FDocuments%2Fflakyrvlogs&ga=1).
+
+The folder names inside the bundle may not match the destination paths in
+Section 1.2 exactly (for example, the no-RV folder may be named
+`FULL_RUNS_NO_RV`, `FULL RUNS: NO RV`, or similar). After unzipping:
+
+- Move every per-container folder from the **RV-labelled** source folder
+  into `data/FULL RUNS: RV/` so it ends up at
+  `data/FULL RUNS: RV/<container> runs/...`.
+- Move every per-container folder from the **NO-RV-labelled** source folder
+  into `data/FULL RUNS: NO RV/` so it ends up at
+  `data/FULL RUNS: NO RV/<container> runs/...`.
+
+The two destination paths must match Section 1.2 character-for-character
+(spaces and colon included) — the orchestrator looks them up by exact name.
+Live mode (Section 3) does not need this step.
+
+### 1.4 Why this layout
+
+- **`experiments/` and `scripts/` sit one level above `ReproFlake-C9E6/`**
+  because the per-container orchestrator reads `../experiments/tracemop.jar`
+  and `../scripts/javamop-extension/` directly. They are shared with the
+  parent Valg project and must remain at this relative path.
+- **`LLM Scripts/` and `TraceMop Scripts/` are split** so that Python
+  prompt-assembly, LLM dispatch, and response parsing stay independently
+  testable from the bash orchestrators that drive the docker container.
+- **`data/` holds all runtime state** — input zips, scratch workspaces,
+  and archived outputs together — so the source tree stays clean and
+  `data/` can be excluded wholesale from version control.
+- **`FULL RUNS: RV/` and `FULL RUNS: NO RV/`** are kept as separate
+  sibling trees so the two ablation configurations described in the report
+  cannot collide. `SIMULATED RUNS: …/` mirrors that split for replay-mode
+  output.
+
+---
+
+## 2. Reproduce — Replay mode (no API key)
+
+Replay mode re-runs the SWE 699 pipeline end-to-end using the archived LLM
+responses populated in Section 1.3. Every step is real except the LLM API
+call, which is replayed from the canned response. No `ANTHROPIC_API_KEY`
+or `OPENAI_API_KEY` is needed.
+
+### 2.1 Command
 
 ```bash
-# (one-time) Install host tools
-# Ubuntu/Debian:
-sudo apt-get install -y python3 python3-pip python3-venv unzip patch curl git
-# macOS:
-# xcode-select --install
+cd <cloned-dir>/ReproFlake-C9E6
 
-python3 -m venv ~/.venvs/reproflake
-source ~/.venvs/reproflake/bin/activate
-pip install --upgrade pip
-pip install anthropic openai
+./TraceMop\ Scripts/simulate_run_pass_at_k.py jnrposixd9f3f84 \
+    --rv-traces yes \
+    --models claude,openai \
+    --runs 2
 
-# (one-time) Clone the repository and export API keys
-git clone <repo-url>
+# Inspect a verdict and the aggregate
+cat "data/SIMULATED RUNS: RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
+head -5 "data/SIMULATED RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
+```
+
+To replay a different supported container, substitute its `result_container`
+value from `test_config.csv`.
+
+### 2.2 Argument reference
+
+| flag | meaning |
+|---|---|
+| *(positional)* | the `result_container` value from `test_config.csv` |
+| `--rv-traces yes\|no` | required. `yes` replays from `data/FULL RUNS: RV/` and writes to `data/SIMULATED RUNS: RV/`. `no` uses the no-RV ablation pair. |
+| `--models claude,openai` | comma-separated; default `claude,openai`. Pass either alone to skip the other. |
+| `--runs N` | runs per model. Capped at 2 (the archive holds 2 per model); >2 is clamped with a warning. Default 2. |
+| `--keep-workspace` | don't clean up `data/<container>/` scratch + docker container after the batch. Default: clean up. |
+
+Before any docker work, the wrapper validates that every `(model, run)`
+archive has at least `llm_response_turn1.json`; missing files abort fast.
+
+### 2.3 What's simulated, what's real
+
+Everything runs against the host's docker, JVM, and Maven for real
+**except** the LLM call:
+
+- **Real:** zip extract, `Fixed/`/`Flaky/` materialization, container start,
+  `tracemop.jar` install, RV trace generation on Fixed + Flaky, trace
+  comparison, prompt assembly, patch apply, recompile, post-fix verify,
+  feedback-loop branching.
+- **Replayed verbatim from archive:** the LLM response text, token usage,
+  stop reason, and model name. Carried from
+  `Steps Output Files/llm_response_turn{1,2,3,4}.json`.
+- **Regenerated from current disk:** `llm_artifacts_turn{2,4}.txt` —
+  the artifacts the LLM requested in the canned response are fetched
+  fresh from THIS run's source tree.
+
+If simulated verify ever produces a different verdict than the original
+(e.g. inherent flakiness in a SUT), the simulator hard-errors with a
+"simulation diverged" message and the wrapper records that run as
+INCOMPLETE. Remaining `(model, run)` combinations still execute.
+
+---
+
+## 3. Reproduce — Live mode (requires API keys)
+
+Live mode runs the full pipeline against the actual Claude and OpenAI APIs.
+This is the path that originally produced the archives in
+`data/FULL RUNS: RV/` and `data/FULL RUNS: NO RV/`.
+
+### 3.1 Command
+
+```bash
 cd <cloned-dir>/ReproFlake-C9E6
 export ANTHROPIC_API_KEY=sk-ant-...
 export OPENAI_API_KEY=sk-...
 
-# Each new shell: re-activate the virtual environment
-source ~/.venvs/reproflake/bin/activate
-
-# Reproduce any container from test_config.csv (jnrposix shown)
 ./TraceMop\ Scripts/run_pass_at_k.py jnrposixd9f3f84 \
-    --rv-traces yes --models claude,openai --runs 3
+    --rv-traces yes \
+    --models claude,openai \
+    --runs 3
 
-# Inspect the verdict and aggregate
 cat "data/FULL RUNS: RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
 head -5 "data/FULL RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
 ```
 
-## 1. Overview
+The default `--models claude,openai` requires both API keys. Pass
+`--models claude` or `--models openai` alone to skip the other backend.
 
-The pipeline collects runtime-verification (RV) traces from a deterministic-passing
-run and a deterministic-failing run of a flaky test, supplies the traces and the
-relevant source code to an LLM (Claude and/or OpenAI), applies the patch returned
-by the LLM, and re-runs the test to verify the fix. Each `(backend, run)`
-combination is executed `N` times to measure the repair success rate.
+### 3.2 Argument reference
 
-The CSV row used as the worked example is:
-
-| field | value |
+| flag | meaning |
 |---|---|
-| `result_container` | `jnrposixd9f3f84` |
-| `test_type` | `od` (order-dependent) |
-| `module` | `.` |
-| `polluter` | `jnr.posix.EnvTest#testSetenvOverwrite` |
-| `victim`   | `jnr.posix.GroupTest#getgroups` |
-| `java` | 8 |
-| `url` | `https://zenodo.org/records/18605131/files/jnrposixd9f3f84.zip` (~124 MB) |
+| *(positional)* | the `result_container` value from `test_config.csv` |
+| `--rv-traces yes\|no` | required. `yes` runs the full pipeline including the RV trace section in the LLM prompt and archives under `data/FULL RUNS: RV/`. `no` runs the ablation that omits the RV section and archives under `data/FULL RUNS: NO RV/`. |
+| `--models claude,openai` | comma-separated; default `claude,openai`. |
+| `--runs N` | runs per backend. Default 3. |
+| `--keep-workspace` | don't clean up `data/<container>/` scratch + docker container after the batch. Default: clean up. |
 
-The `test_type` field selects the orchestrator script (`od` →
-[run_od_tracemop.sh](TraceMop%20Scripts/run_od_tracemop.sh); `td`, `id`, and
-`nio` map to their matching `run_<type>_tracemop.sh` scripts). The current
-pass@k wrapper does not route the `britle` or `unclassified` rows in the CSV.
-The `java` field selects the Docker image. Both are resolved from the CSV
-automatically by
-[run_pass_at_k.py](TraceMop%20Scripts/run_pass_at_k.py); only the
-`result_container` value is supplied on the command line.
+Each invocation clears and re-runs the requested `(model, run)` folders
+before archiving fresh results — re-running the same command intentionally
+overwrites those per-run archives.
+
+### 3.3 Backends and first-run timing
+
+Two LLM backends are supported:
+
+- `claude` — Anthropic `claude-sonnet-4-6` ([call_llm_claude.py:38](LLM%20Scripts/call_llm_claude.py#L38)). Requires `ANTHROPIC_API_KEY`.
+- `openai` — OpenAI `gpt-4o` ([call_llm_openai.py:37](LLM%20Scripts/call_llm_openai.py#L37)). Requires `OPENAI_API_KEY`.
+
+The first invocation for any given `(test_type, java)` pair triggers a
+one-time Docker image build that clones and compiles the Surefire fork
+inside the container; this typically takes **5–10 minutes**. Subsequent
+invocations reuse the cached image and start within seconds. The Zenodo
+dataset archive is also downloaded on first use and cached in `data/`.
+
+A complete `--models claude,openai --runs 3` invocation for `jnrposixd9f3f84`
+takes approximately **20–40 minutes** end-to-end after one-time setup.
+
+Per-run token counts and wall-clock time are recorded in `summary.csv` and
+its human-readable companion `summary.md`, plus the top-level
+`Complete Containers Summary.csv`.
 
 ---
 
-## 2. Prerequisites
+## 4. Prerequisites
 
-### 2.1 Already required
+The full list below is what **live mode** (Section 3) needs. **Replay mode**
+(Section 2) only requires `docker`, `python3`, `unzip`, and the OneDrive
+bundle from Section 1.3 — the `anthropic` / `openai` PyPI packages and the
+`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` environment variables are **not**
+used by replay mode.
+
+### 4.1 Already required
 
 - **Docker** (Docker Desktop on macOS, or `dockerd` on Linux) must be running
   and reachable; `docker info` must succeed without `sudo`.
@@ -86,7 +244,7 @@ automatically by
   the Docker base image and the in-image Surefire fork build (~3 GB), and the
   per-run archives (~150 MB × `N` runs × number of models).
 
-### 2.2 Also needed on the host
+### 4.2 Also needed on the host
 
 The orchestrator runs on the host in Python and delegates JVM and Maven work
 to the container. The host therefore requires the following tools and
@@ -94,14 +252,14 @@ credentials:
 
 | Tool | Purpose |
 |---|---|
-| `python3` (≥ 3.8) with `pip` and `venv` | runs `run_pass_at_k.py` and the LLM scripts |
-| `anthropic` PyPI package | Claude backend |
-| `openai` PyPI package | OpenAI backend |
-| `unzip` | unzips the dataset archive |
+| `python3` (≥ 3.8) with `pip` and `venv` | runs `run_pass_at_k.py` / `simulate_run_pass_at_k.py` and the LLM scripts |
+| `anthropic` PyPI package | Claude backend (live mode only) |
+| `openai` PyPI package | OpenAI backend (live mode only) |
+| `unzip` | unzips the dataset archive (live mode) and the OneDrive bundle (replay mode) |
 | `patch` | applies `Fixed.patch` |
 | `curl` *(or `wget`)* | downloads the dataset archive on first use |
 | `git` | clones the repository |
-| `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` | the LLM step is mandatory; the pipeline aborts when the key for the selected backend is unset. The default `--models claude,openai` run requires both keys. |
+| `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY` | **Live mode only.** The LLM step is mandatory in live mode; the pipeline aborts when the key for the selected backend is unset. The default `--models claude,openai` run requires both keys. Replay mode does not consult these env vars. |
 
 All remaining build-time dependencies — the selected JDK 8/11/17 image,
 Maven 3.8.6, the
@@ -111,7 +269,7 @@ host-side installation.
 
 ---
 
-## 3. Install the host tools
+## 5. Install the host tools
 
 Python dependencies are installed into a virtual environment. System-wide
 installation via `pip install --user` is not used: Python 3.12 and later
@@ -119,7 +277,7 @@ installation via `pip install --user` is not used: Python 3.12 and later
 and Debian 12+) enforce PEP 668 and reject such installations with
 `error: externally-managed-environment`.
 
-### 3.1 macOS
+### 5.1 macOS
 
 `unzip`, `patch`, `curl`, `git`, and `python3` are provided by the Xcode
 Command Line Tools. If these are not present, the first command below
@@ -145,7 +303,7 @@ pip install --upgrade pip
 pip install anthropic openai
 ```
 
-### 3.2 Ubuntu / Debian
+### 5.2 Ubuntu / Debian
 
 ```bash
 sudo apt-get update
@@ -165,9 +323,12 @@ create and activate the virtual environment as shown above.
 > orchestrator is invoked. If it is not active, the LLM scripts abort with
 > `ModuleNotFoundError: No module named 'anthropic'` (or `'openai'`).
 
-### 3.3 API keys
+### 5.3 API keys
 
-Set API keys in the current shell. The default command in this guide runs both
+> Skip this subsection entirely if you are only doing replay mode (Section 2)
+> — replay does not call any LLM API and does not read these env vars.
+
+Set API keys in the current shell. The default live-mode command runs both
 backends, so it needs both keys; a one-backend run only needs that backend's
 key.
 
@@ -203,105 +364,25 @@ To determine the active shell, run `echo $SHELL`: `/bin/zsh` indicates
 visible to a fresh shell by opening a new terminal and running
 `echo "$ANTHROPIC_API_KEY"`; the configured value should be printed.
 
-### 3.4 Sanity check
+### 5.4 Sanity check
 
 Verify the host environment with the following four commands:
 
 ```bash
 docker info >/dev/null && echo "docker OK"
-python3 -c "import anthropic, openai; print('python deps OK')"
 unzip -v >/dev/null && patch --version >/dev/null && curl --version >/dev/null \
   && echo "shell tools OK"
+
+# Live mode only — replay mode does not need these
+python3 -c "import anthropic, openai; print('python deps OK')"
 [[ -n "$ANTHROPIC_API_KEY" ]] && [[ -n "$OPENAI_API_KEY" ]] && echo "API keys OK"
 ```
 
-Each command must print its `OK` message. The Python check requires the
-virtual environment to be active in the current shell.
-
----
-
-## 4. Clone the repository
-
-The orchestrator reads three artifacts located one directory above
-`ReproFlake-C9E6/`: `../experiments/tracemop.jar`,
-`../scripts/javamop-extension/`, and `../scripts/events_encoding_id.txt`
-(see [run_od_tracemop.sh:88-90](TraceMop%20Scripts/run_od_tracemop.sh#L88-L90)).
-The full repository must therefore be cloned; cloning only the
-`ReproFlake-C9E6/` subdirectory is not sufficient.
-
-```bash
-git clone <repo-url>
-cd <cloned-dir>/ReproFlake-C9E6
-
-# Verify the host-side artifacts read by the orchestrator
-ls -l ../experiments/tracemop.jar             # ~19 MB
-ls -l ../scripts/javamop-extension/pom.xml
-ls -l ../scripts/events_encoding_id.txt
-```
-
-All three artifacts are checked into the repository, so a complete clone is
-sufficient for these host-side inputs. The dataset archive is still downloaded
-on first use, and Docker image builds may download their own build-time
-dependencies. If any of the three host-side inputs is missing, the pipeline
-aborts at step 3, 4a, or 5.
-
----
-
-## 5. Run a container
-
-From `<cloned-dir>/ReproFlake-C9E6/`, with the virtual environment active,
-invoke the orchestrator:
-
-```bash
-source ~/.venvs/reproflake/bin/activate    # if not already active in the current shell
-
-# Worked example: jnrposix, both backends, 3 runs each
-./TraceMop\ Scripts/run_pass_at_k.py jnrposixd9f3f84 \
-    --rv-traces yes \
-    --models claude,openai \
-    --runs 3
-```
-
-To reproduce a different supported container, substitute its `result_container`
-value from `test_config.csv`. All remaining parameters (`test_type`, `module`,
-`java`, `polluter`, `victim`, dataset URL) are read from the CSV
-automatically.
-
-### 5.1 Argument reference
-
-| flag | meaning |
-|---|---|
-| *(positional)* | the `result_container` value from `test_config.csv` |
-| `--rv-traces yes\|no` | required. `yes` runs the full pipeline, including the RV trace section in the LLM prompt; output is archived under `data/FULL RUNS: RV/`. `no` runs the ablation that omits the RV section; output is archived under `data/FULL RUNS: NO RV/`. |
-| `--models claude,openai` | comma-separated list of LLM backends to invoke. The default is `claude,openai`. Pass `claude` or `openai` alone to skip the other. |
-| `--runs N` | number of runs per backend. The default is 3. |
-
-Each invocation clears and re-runs the requested `(model, run)` folders before
-archiving fresh results, so reusing the same command intentionally overwrites
-those per-run archives.
-
-### 5.2 First-run timing
-
-The first invocation for any given `(test_type, java)` pair triggers a
-one-time Docker image build that clones and compiles the Surefire fork
-inside the container; this typically takes **5–10 minutes**. Subsequent
-invocations reuse the cached image and start within seconds. The Zenodo
-dataset archive is also downloaded on first use and cached in `data/`.
-
-A complete `--models claude,openai --runs 3` invocation for `jnrposixd9f3f84`
-takes approximately **20–40 minutes** end-to-end after the one-time setup is
-complete.
-
-### 5.3 Backends
-
-Two LLM backends are supported:
-
-- `claude` — Anthropic `claude-sonnet-4-6` ([call_llm_claude.py:38](LLM%20Scripts/call_llm_claude.py#L38)). Requires `ANTHROPIC_API_KEY`.
-- `openai` — OpenAI `gpt-4o` ([call_llm_openai.py:37](LLM%20Scripts/call_llm_openai.py#L37)). Requires `OPENAI_API_KEY`.
-
-Per-run token counts and wall-clock time are recorded in `summary.csv` (and
-its human-readable companion `summary.md`) and in the top-level
-`Complete Containers Summary.csv`.
+Each command must print its `OK` message. The last two checks (Python
+imports and API keys) are required only for live mode (Section 3); replay
+mode (Section 2) needs only the docker and shell-tools checks. The Python
+import check requires the virtual environment to be active in the current
+shell.
 
 ---
 
@@ -342,6 +423,11 @@ ReproFlake-C9E6/
                 └── run 3/
 ```
 
+**Replay mode** (Section 2) writes output under `data/SIMULATED RUNS: RV/`
+or `data/SIMULATED RUNS: NO RV/` using the identical per-run structure
+shown above; its cross-invocation log lives at the `ReproFlake-C9E6/` root
+as `Simulated Complete Containers Summary.csv`.
+
 Three files address the most common questions:
 
 - **Verdict for a single run** — `verify_after_fix.verdict` (one of `PASSED`,
@@ -358,10 +444,13 @@ Three files address the most common questions:
 
 ## 7. Script file reference
 
-Because this artifact integrates Valg with ReproFlake, we have added 25
+Because this artifact integrates Valg with ReproFlake, we have added 27
 source scripts under the two directories below. These scripts drive trace
 collection, prompt construction, LLM repair, patch application, verification,
-and result aggregation.
+result aggregation, and replay-mode reproduction.
+
+> All paths in this section are relative to `ReproFlake-C9E6/` — the
+> directory you `cd` into in Section 1.1.
 
 ### 7.1 `LLM Scripts/`
 
@@ -370,7 +459,8 @@ and result aggregation.
 | `LLM Scripts/apply_fix.py` | Applies the fix stored in `llm_response.json` to the container's `Flaky/` source tree. It first tries the unified diff from `OUTPUT A`, then falls back to the structured `OUTPUT B` splicer, and records compile/recompile diagnostics in `apply_report.json`. |
 | `LLM Scripts/assemble_llm_context.py` | Shared helper module for all per-type prompt assemblers. It loads CSV metadata, reads files with fallback encodings, extracts Java methods/class structure, parses failure logs, and finds production code mentioned in stack traces. |
 | `LLM Scripts/build_feedback.py` | Builds the `feedback_payload.txt` user turn for a second LLM attempt after a retriable failure. It formats category-specific feedback for `compile_failed`, `test_failed`, and `patch_apply_failed` using `apply_report.json` and, when needed, `verify_after_fix.log`. |
-| `LLM Scripts/call_llm.py` | Backend dispatcher used by the shell orchestrators. It selects either the Claude or OpenAI caller from the `<claude\|openai>` argument and forwards optional feedback-turn arguments. |
+| `LLM Scripts/call_llm.py` | Backend dispatcher used by the shell orchestrators. It selects either the Claude or OpenAI caller from the `<claude\|openai>` argument and forwards optional feedback-turn arguments. When the `SIMULATE_FROM` env var is set, the dispatcher routes to `call_llm_simulate.py` instead — replay mode (Section 2). |
+| `LLM Scripts/call_llm_simulate.py` | Replay-mode backend: instead of calling Claude or OpenAI, reads the canned `llm_response_turn{1,2,3,4}.json` from the archive directory pointed at by `SIMULATE_FROM` and writes them out as if a live backend produced them. Backend-agnostic — token-usage shape is preserved verbatim from the canned file. Hard-fails with a "simulation diverged" message if a needed turn file is missing in the archive. |
 | `LLM Scripts/call_llm_claude.py` | Sends `llm_context.txt` to Anthropic Claude and writes the parsed response to `llm_response.json`. It also supports the feedback round by replaying `llm_conversation.json`, appending `feedback_payload.txt`, and overwriting `llm_response.json` with the corrected final response. |
 | `LLM Scripts/call_llm_openai.py` | Sends `llm_context.txt` to OpenAI `gpt-4o` and writes the parsed response to `llm_response.json`. Like the Claude caller, it can resume the saved conversation for a feedback turn and accumulates token usage metadata. |
 | `LLM Scripts/fetch_artifacts.py` | Implements the closed-enum artifact retrieval protocol used between LLM turns. It parses `<ARTIFACTS_REQUESTED>` blocks and returns imports, file skeletons, method bodies, and source ranges from the target project, or MOP spec definitions from Valg's spec library. |
@@ -395,7 +485,8 @@ and result aggregation.
 | `TraceMop Scripts/run_id_tracemop.sh` | End-to-end orchestrator for ID flaky tests. It runs a passing baseline and a NonDex seeded failing run under TraceMOP, compares traces, generates the LLM prompt, calls the selected backend, applies the patch, and verifies with the same NonDex seed. |
 | `TraceMop Scripts/run_nio_tracemop.sh` | End-to-end orchestrator for NIO flaky tests. It generates a JUnit wrapper that runs the victim twice in one JVM, traces Fixed and Flaky wrapper executions, prompts the LLM, applies the fix, and verifies that the patched wrapper passes both invocations. |
 | `TraceMop Scripts/run_od_tracemop.sh` | End-to-end orchestrator for OD flaky tests. It runs the polluter and victim in deterministic order on Fixed and Flaky variants, collects and compares TraceMOP traces, invokes the LLM repair flow, and verifies the patched Flaky variant with the same ordered test run. |
-| `TraceMop Scripts/run_pass_at_k.py` | Batch wrapper for repeated experiments across models and runs. It selects the correct per-type orchestrator from `test_config.csv`, toggles the RV/no-RV prompt ablation, archives each run, writes per-container `summary.csv` + `summary.md` (pass-at-k report with diagnosis snippets and artifact links), and appends the top-level `Complete Containers Summary.csv`. |
+| `TraceMop Scripts/run_pass_at_k.py` | Live-mode batch wrapper (Section 3) for repeated experiments across models and runs. It selects the correct per-type orchestrator from `test_config.csv`, toggles the RV/no-RV prompt ablation, archives each run, writes per-container `summary.csv` + `summary.md` (pass-at-k report with diagnosis snippets and artifact links), and appends the top-level `Complete Containers Summary.csv`. |
+| `TraceMop Scripts/simulate_run_pass_at_k.py` | Replay-mode batch wrapper (Section 2). Mirrors `run_pass_at_k.py` end-to-end but injects `SIMULATE_FROM` so the LLM step replays from the archives at `data/FULL RUNS: <RV\|NO RV>/`. Output goes under `data/SIMULATED RUNS: <RV\|NO RV>/`; cross-invocation log is `Simulated Complete Containers Summary.csv`. Pre-validates archive presence, clamps `--runs` to 2, and does not require API keys. |
 | `TraceMop Scripts/run_td_tracemop.sh` | End-to-end orchestrator for TD flaky tests. It materializes Fixed and FlakyCodeChange variants, traces both, compares runtime behavior, assembles the TD prompt, calls the LLM, applies the patch, and verifies the patched victim test. |
 
 
