@@ -13,6 +13,74 @@ complete log of one live-mode run of `jnrposixd9f3f84` (Section 8).
 
 ---
 
+## 0. TL;DR — Replay mode quick-start
+
+This section collapses Sections 1–5 into a single command sequence for
+**replay mode** (no API keys required). For full details on any step, see
+the referenced section.
+
+### 0.1 Clone and orient
+
+```bash
+git clone https://anonymous.4open.science/r/CS691Project
+cd CS691Project/ReproFlake-C9E6
+```
+
+### 0.2 Populate the data archives
+
+Download the OneDrive bundle and place the per-container folders under
+`data/FULL RUNS: RV/` and `data/FULL RUNS: NO RV/` as described in
+Section 1.3.
+
+### 0.3 Create and activate the virtual environment
+
+Replay mode needs no third-party packages — skip `pip install`.
+
+**macOS:**
+
+```bash
+# Standard approach
+python3 -m venv ~/.venvs/reproflake
+source ~/.venvs/reproflake/bin/activate
+```
+
+If the above fails with
+`ensurepip returned non-zero exit status 1`
+(seen with Homebrew Python 3.14 and some Anaconda builds on macOS),
+use `--without-pip` instead:
+
+```bash
+python3 -m venv --without-pip ~/.venvs/reproflake
+source ~/.venvs/reproflake/bin/activate
+```
+
+**Ubuntu / Debian:**
+
+```bash
+sudo apt-get install -y python3 python3-venv
+python3 -m venv ~/.venvs/reproflake
+source ~/.venvs/reproflake/bin/activate
+```
+
+### 0.4 Run the replay
+
+```bash
+./TraceMop\ Scripts/simulate_run_pass_at_k.py jnrposixd9f3f84 \
+    --rv-traces yes \
+    --models claude,openai \
+    --runs 2
+```
+Warning: in replay mode, if runs > 2, then it is automatically capped to 2 so only 2 runs per container-model combo is generated. 
+
+### 0.5 Check the results
+
+```bash
+cat "data/SIMULATED RUNS: RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
+head -5 "data/SIMULATED RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
+```
+
+---
+
 ## 1. Repository and data layout
 
 ### 1.1 What gets cloned
