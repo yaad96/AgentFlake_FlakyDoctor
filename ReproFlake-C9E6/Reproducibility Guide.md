@@ -44,7 +44,7 @@ the referenced section.
 
 ### 0.2 Clone the Codebase
 
-> First clone/download the codebase
+> First clone/download the codebase zip
 > then use the script to automatically unzip our `FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/` archives into `ReproFlake-C9E6/data/`
 > These two `FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/` contain all our 20 tested containers, and their logs and each step data. To mimic LLM-responses, our simulation script access data from these folders. 
 > **Replay mode requires the Zenodo bundle.** You **must** download and
@@ -52,8 +52,8 @@ the referenced section.
 > before running the replay (Section 0.4). The bootstrap script below
 > does this for you; if you'd rather download manually, see Section 1.3.
 
-First, Download the codebase: https://anonymous.4open.science/r/CS691Project
-Second, do the following:
+1. First, Download the zipped codebase: https://anonymous.4open.science/r/CS691Project
+2. Second, unzip the codebase do the following:
 ```bash
 
 cd CS691Project/ReproFlake-C9E6
