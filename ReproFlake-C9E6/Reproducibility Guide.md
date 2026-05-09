@@ -188,7 +188,7 @@ documented in Section 0.2). It fetches the bundle from Zenodo and places
 1. Open the Zenodo record in a browser and download the zip (~2.4 GB):
    [zenodo.org/records/20100590](https://zenodo.org/records/20100590)
 
-2. Unzip it. The archive contains two top-level folders: `FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/`.
+2. Unzip it. Find `FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/` inside.
 
 3. Inside `ReproFlake-C9E6/`, create a `data/` folder if it doesn't already exist — a freshly cloned repo has no `data/`.
 
