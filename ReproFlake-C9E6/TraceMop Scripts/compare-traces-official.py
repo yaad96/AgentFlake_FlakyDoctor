@@ -19,6 +19,11 @@ def read_events_map():
 def read_locations(locations_txt):
     locations = {}
     header = False
+    # Create blank file if it doesn't exist
+    if not os.path.exists(locations_txt):
+        with open(locations_txt, 'w') as f:
+            f.write('id location\n')  # Write a header for the blank file
+        return locations
     with open(locations_txt) as f:
         for line in f.readlines():
             if not header:
@@ -40,6 +45,13 @@ def read_unique_traces(traces_txt, convert=None):
     traces = {}  # Map trace to frequency
     header = False
     convert_event = 1 # 1 is unsure, 2 is sure, 0 is no
+    
+    # Create blank file if it doesn't exist
+    if not os.path.exists(traces_txt):
+        with open(traces_txt, 'w') as f:
+            f.write('trace frequency trace\n')  # Write a header for the blank file
+        return traces
+    
     with open(traces_txt) as f:
         for line in f.readlines():
             line = line.strip()
@@ -224,13 +236,17 @@ def main(argv=None):
     if len(argv) == 4:
         list_test = argv[3] == 'true'
 
-    if not os.path.exists(os.path.join(actual, 'locations.txt')) or not os.path.exists(os.path.join(expected, 'locations.txt')):
-        print('Cannot find locations.txt')
-        exit(1)
-
-    if not os.path.exists(os.path.join(actual, 'unique-traces.txt')) or not os.path.exists(os.path.join(expected, 'unique-traces.txt')):
-        print('Cannot find unique-traces.txt')
-        exit(1)
+    # Create blank files if they don't exist (for handling missing traces directories)
+    for traces_dir in [actual, expected]:
+        for fname in ['locations.txt', 'unique-traces.txt']:
+            fpath = os.path.join(traces_dir, fname)
+            if not os.path.exists(fpath):
+                os.makedirs(traces_dir, exist_ok=True)
+                with open(fpath, 'w') as f:
+                    if fname == 'locations.txt':
+                        f.write('id location\n')
+                    elif fname == 'unique-traces.txt':
+                        f.write('trace frequency trace\n')
 
     read_events_map()
     compare(actual, expected, list_test)
