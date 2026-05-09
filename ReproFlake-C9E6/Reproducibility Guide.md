@@ -61,6 +61,7 @@ In general, OD and NIO containers take around 10-15 mins to complete each execut
 cd ReproFlake-C9E6
 mkdir data
 cd data
+chmod +x "../TraceMop Scripts/bootstrap_archives.sh"
 ../TraceMop\ Scripts/bootstrap_archives.sh
 ```
 
