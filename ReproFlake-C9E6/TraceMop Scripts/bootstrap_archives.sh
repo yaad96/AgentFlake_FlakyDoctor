@@ -5,7 +5,7 @@
 # re-fetch.
 set -euo pipefail
 
-ZENODO_URL="https://zenodo.org/records/20099827/files/18_RV_17_NRV.zip?token=eyJhbGciOiJIUzUxMiJ9.eyJpZCI6IjlhODEwZjgzLWI1ZWEtNDY4ZS1iYjIzLTkzMWEzOWRhNzRkYyIsImRhdGEiOnt9LCJyYW5kb20iOiI1YjJmNjk1ZGM4Y2I1YTBhODI1OTFlYjU3NzUzMDQzNyJ9.SwGk1BCQ9_pyXYx_cPnB8ydG-1B2BoTwi_JwpkoxCobXLkIoIWXvKwzd0ssuQthkU0jubNu7WzYESVU-mUMYAQ&download=1"
+ZENODO_URL="https://zenodo.org/records/20100590/files/RV_NRV.zip?download=1"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -29,7 +29,7 @@ TMP_ZIP="$DATA/.bundle.zip.partial"
 TMP_DIR="$(mktemp -d "$DATA/.bundle.XXXXXX")"
 trap 'rm -rf "$TMP_DIR" "$TMP_ZIP"' EXIT
 
-echo "[bootstrap] downloading zipped containers from Zenodo (~1.3 GB)..."
+echo "[bootstrap] downloading zipped containers from Zenodo (~2.4 GB)..."
 curl -L --fail --progress-bar -o "$TMP_ZIP" "$ZENODO_URL"
 
 echo "[bootstrap] unzipping..."

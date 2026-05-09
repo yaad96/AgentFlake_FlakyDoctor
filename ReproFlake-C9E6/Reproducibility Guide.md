@@ -55,11 +55,13 @@ the referenced section.
 ```bash
 git clone https://anonymous.4open.science/r/CS691Project
 cd CS691Project/ReproFlake-C9E6
-./TraceMop\ Scripts/bootstrap_archives.sh
+mkdir data
+cd data
+../TraceMop\ Scripts/bootstrap_archives.sh
 ```
 
-Zenodo record (clickable for manual browser download, ~1.3 GB):
-[zenodo.org/records/20099827](https://zenodo.org/records/20099827?token=eyJhbGciOiJIUzUxMiJ9.eyJpZCI6IjlhODEwZjgzLWI1ZWEtNDY4ZS1iYjIzLTkzMWEzOWRhNzRkYyIsImRhdGEiOnt9LCJyYW5kb20iOiI1YjJmNjk1ZGM4Y2I1YTBhODI1OTFlYjU3NzUzMDQzNyJ9.SwGk1BCQ9_pyXYx_cPnB8ydG-1B2BoTwi_JwpkoxCobXLkIoIWXvKwzd0ssuQthkU0jubNu7WzYESVU-mUMYAQ)
+Zenodo record (clickable for manual browser download, ~2.4 GB):
+[zenodo.org/records/20100590](https://zenodo.org/records/20100590)
 
 The bootstrap is idempotent — re-running is a no-op once the archives
 are extracted. To force re-fetch, delete `data/.bundle_extracted`.
@@ -176,12 +178,14 @@ documented in Section 0.2). It fetches the bundle from Zenodo and places
 
 **Manual Method** (if you'd rather do it yourself):
 
-1. Open the Zenodo record in a browser and download the zip (~1.3 GB):
-   [zenodo.org/records/20099827](https://zenodo.org/records/20099827?token=eyJhbGciOiJIUzUxMiJ9.eyJpZCI6IjlhODEwZjgzLWI1ZWEtNDY4ZS1iYjIzLTkzMWEzOWRhNzRkYyIsImRhdGEiOnt9LCJyYW5kb20iOiI1YjJmNjk1ZGM4Y2I1YTBhODI1OTFlYjU3NzUzMDQzNyJ9.SwGk1BCQ9_pyXYx_cPnB8ydG-1B2BoTwi_JwpkoxCobXLkIoIWXvKwzd0ssuQthkU0jubNu7WzYESVU-mUMYAQ)
+1. Open the Zenodo record in a browser and download the zip (~2.4 GB):
+   [zenodo.org/records/20100590](https://zenodo.org/records/20100590)
 
 2. Unzip it. The archive contains two top-level folders: `FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/`.
 
-3. Move both folders into `ReproFlake-C9E6/data/`.
+3. Inside `ReproFlake-C9E6/`, create a `data/` folder if it doesn't already exist — a freshly cloned repo has no `data/`.
+
+4. Move both folders (`FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/`) into `ReproFlake-C9E6/data/`.
 
 Live mode (Section 3) does not need this step.
 
