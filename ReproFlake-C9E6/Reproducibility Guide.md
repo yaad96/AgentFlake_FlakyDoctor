@@ -52,8 +52,8 @@ the referenced section.
 > before running the replay (Section 0.4). The bootstrap script below
 > does this for you; if you'd rather download manually, see Section 1.3.
 
-Download the codebase: https://anonymous.4open.science/r/CS691Project
-then do the following:
+First, Download the codebase: https://anonymous.4open.science/r/CS691Project
+Second, do the following:
 ```bash
 
 cd CS691Project/ReproFlake-C9E6
