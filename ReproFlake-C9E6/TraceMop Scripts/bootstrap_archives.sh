@@ -41,14 +41,29 @@ unzip "$TMP_ZIP" -d "$TMP_DIR" | awk '
   END { printf "\r[bootstrap] extracted %d files total.   \n", n }
 '
 
+# Locate FULL_RUNS_RV and FULL_RUNS_NO_RV. They may sit at the top level
+# of the bundle, or nested one level deeper inside a wrapper folder.
+# Exclude macOS metadata (__MACOSX) from the search.
+find_dir() {
+  find "$TMP_DIR" -maxdepth 3 -type d -name "$1" -not -path "*/__MACOSX/*" 2>/dev/null | head -n 1
+}
+RV_PATH="$(find_dir FULL_RUNS_RV)"
+NO_RV_PATH="$(find_dir FULL_RUNS_NO_RV)"
+
+if [[ -z "$RV_PATH" || -z "$NO_RV_PATH" ]]; then
+  echo "ERROR: could not locate FULL_RUNS_RV or FULL_RUNS_NO_RV in the unzipped bundle" >&2
+  exit 1
+fi
+if [[ "$(dirname "$RV_PATH")" != "$(dirname "$NO_RV_PATH")" ]]; then
+  echo "ERROR: FULL_RUNS_RV and FULL_RUNS_NO_RV have different parent dirs in the bundle" >&2
+  exit 1
+fi
+
+SOURCE="$(dirname "$RV_PATH")"
 for name in FULL_RUNS_RV FULL_RUNS_NO_RV; do
-  if [[ ! -d "$TMP_DIR/$name" ]]; then
-    echo "ERROR: '$name' not found at top level of bundle" >&2
-    exit 1
-  fi
   mkdir -p "$DATA/$name"
   shopt -s dotglob nullglob
-  for child in "$TMP_DIR/$name"/*; do
+  for child in "$SOURCE/$name"/*; do
     mv "$child" "$DATA/$name/"
   done
   shopt -u dotglob nullglob
