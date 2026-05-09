@@ -123,14 +123,14 @@ distinct kinds of subdirectory:
 ReproFlake-C9E6/data/
 ├── <container>.zip                      # INPUT  — dataset, downloaded on first use from Zenodo
 ├── <container>/                         # SCRATCH — workspace; wiped between runs (unless --keep-workspace)
-├── FULL RUNS: RV/                       # ARCHIVE — pre-recorded LLM responses from the live runs (RV ablation)
+├── FULL_RUNS_RV/                       # ARCHIVE — pre-recorded LLM responses from the live runs (RV ablation)
 │   └── <container> runs/
 │       ├── summary.csv
         ├── summary.md
 │       ├── Claude/run 1/Steps Output Files/llm_response_turn1.json …
 │       └── OpenAI/run 1/Steps Output Files/llm_response_turn1.json …
-├── FULL RUNS: NO RV/                    # ARCHIVE — same shape, no-RV ablation
-└── SIMULATED RUNS: RV/, : NO RV/        # OUTPUT  — populated by replay mode; same layout as FULL RUNS
+├── FULL_RUNS_NO_RV/                    # ARCHIVE — same shape, no-RV ablation
+└── SIMULATED_RUNS_RV/, SIMULATED_RUNS_NO_RV/        # OUTPUT  — populated by replay mode; same layout as FULL RUNS
 ```
 
 The two `FULL RUNS:` archives are the source of truth for replay mode and
@@ -144,14 +144,14 @@ The archive bundle is hosted on OneDrive:
 
 The folder names inside the bundle may not match the destination paths in
 Section 1.2 exactly (for example, the no-RV folder may be named
-`FULL_RUNS_NO_RV`, `FULL RUNS: NO RV`, or similar). After unzipping:
+`FULL_RUNS_NO_RV`, `FULL_RUNS_RV`, or similar). After unzipping:
 
 - Move every per-container folder from the **RV-labelled** source folder
-  into `data/FULL RUNS: RV/` so it ends up at
-  `data/FULL RUNS: RV/<container> runs/...`.
+  into `data/FULL_RUNS_RV/` so it ends up at
+  `data/FULL_RUNS_RV/<container> runs/...`.
 - Move every per-container folder from the **NO-RV-labelled** source folder
-  into `data/FULL RUNS: NO RV/` so it ends up at
-  `data/FULL RUNS: NO RV/<container> runs/...`.
+  into `data/FULL_RUNS_NO_RV/` so it ends up at
+  `data/FULL_RUNS_NO_RV/<container> runs/...`.
 
 The two destination paths must match Section 1.2 character-for-character
 (spaces and colon included) — the orchestrator looks them up by exact name.
@@ -169,7 +169,7 @@ Live mode (Section 3) does not need this step.
 - **`data/` holds all runtime state** — input zips, scratch workspaces,
   and archived outputs together — so the source tree stays clean and
   `data/` can be excluded wholesale from version control.
-- **`FULL RUNS: RV/` and `FULL RUNS: NO RV/`** are kept as separate
+- **`FULL_RUNS_RV/` and `FULL_RUNS_NO_RV/`** are kept as separate
   sibling trees so the two ablation configurations described in the report
   cannot collide. `SIMULATED RUNS: …/` mirrors that split for replay-mode
   output.
@@ -194,8 +194,8 @@ cd <this-cloned-dir>/ReproFlake-C9E6
     --runs 2
 
 # Inspect a verdict and the aggregate
-cat "data/SIMULATED RUNS: RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
-head -5 "data/SIMULATED RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
+cat "data/SIMULATED_RUNS_RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
+head -5 "data/SIMULATED_RUNS_RV/jnrposixd9f3f84 runs/summary.csv"
 ```
 
 To replay a different supported container, substitute its `result_container`
@@ -206,7 +206,7 @@ value from `test_config.csv`.
 | flag | meaning |
 |---|---|
 | *<result_container>* | the `result_container` value from `test_config.csv` |
-| `--rv-traces yes\|no` | required. `yes` replays from `data/FULL RUNS: RV/` and writes to `data/SIMULATED RUNS: RV/`. `no` uses the no-RV ablation pair. |
+| `--rv-traces yes\|no` | required. `yes` replays from `data/FULL_RUNS_RV/` and writes to `data/SIMULATED_RUNS_RV/`. `no` uses the no-RV ablation pair. |
 | `--models claude,openai` | comma-separated; default `claude,openai`. Pass either alone to skip the other. |
 | `--runs N` | runs per model. Capped at 2 (the archive holds 2 per model); >2 is clamped with a warning. Default 2. |
 | `--keep-workspace` | don't clean up `data/<container>/` scratch + docker container after the batch. Default: clean up. |
@@ -241,7 +241,7 @@ INCOMPLETE. Remaining `(model, run)` combinations still execute.
 
 Live mode runs the full pipeline against the actual Claude and OpenAI APIs.
 This is the path that originally produced the archives in
-`data/FULL RUNS: RV/` and `data/FULL RUNS: NO RV/`.
+`data/FULL_RUNS_RV/` and `data/FULL_RUNS_NO_RV/`.
 
 ### 3.1 Command
 
@@ -255,8 +255,8 @@ export OPENAI_API_KEY=sk-...
     --models claude,openai \
     --runs 3
 
-cat "data/FULL RUNS: RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
-head -5 "data/FULL RUNS: RV/jnrposixd9f3f84 runs/summary.csv"
+cat "data/FULL_RUNS_RV/jnrposixd9f3f84 runs/Claude/run 1/Steps Output Files/verify_after_fix.verdict"
+head -5 "data/FULL_RUNS_RV/jnrposixd9f3f84 runs/summary.csv"
 ```
 
 The default `--models claude,openai` requires both API keys. Pass
@@ -267,7 +267,7 @@ The default `--models claude,openai` requires both API keys. Pass
 | flag | meaning |
 |---|---|
 | *(positional)* | the `result_container` value from `test_config.csv` |
-| `--rv-traces yes\|no` | required. `yes` runs the full pipeline including the RV trace section in the LLM prompt and archives under `data/FULL RUNS: RV/`. `no` runs the ablation that omits the RV section and archives under `data/FULL RUNS: NO RV/`. |
+| `--rv-traces yes\|no` | required. `yes` runs the full pipeline including the RV trace section in the LLM prompt and archives under `data/FULL_RUNS_RV/`. `no` runs the ablation that omits the RV section and archives under `data/FULL_RUNS_NO_RV/`. |
 | `--models claude,openai` | comma-separated; default `claude,openai`. |
 | `--runs N` | runs per backend. Default 3. |
 | `--keep-workspace` | don't clean up `data/<container>/` scratch + docker container after the batch. Default: clean up. |
@@ -467,7 +467,7 @@ ReproFlake-C9E6/
 ├── Complete Containers Summary.csv               # one row per (model, run); append-only across invocations
 ├── Simulated Complete Containers Summary.csv               # one row per (model, run); append-only across invocations in simulated environment
 └── data/
-    └── FULL RUNS: RV/                            # "FULL RUNS: NO RV/" when --rv-traces no is used
+    └── FULL_RUNS_RV/                            # "FULL_RUNS_NO_RV/" when --rv-traces no is used
         └── jnrposixd9f3f84 runs/
             ├── summary.csv                       # per-run aggregate over every run on disk (machine-readable)
             ├── summary.md                        # same data as summary.csv, formatted as a human-readable pass@k report
@@ -494,8 +494,8 @@ ReproFlake-C9E6/
                 └── run 3/
 ```
 
-**Replay mode** (Section 2) writes output under `data/SIMULATED RUNS: RV/`
-or `data/SIMULATED RUNS: NO RV/` using the identical per-run structure
+**Replay mode** (Section 2) writes output under `data/SIMULATED_RUNS_RV/`
+or `data/SIMULATED_RUNS_NO_RV/` using the identical per-run structure
 shown above; its cross-invocation log lives at the `ReproFlake-C9E6/` root
 as `Simulated Complete Containers Summary.csv`.
 
@@ -557,7 +557,7 @@ result aggregation, and replay-mode reproduction.
 | `TraceMop Scripts/run_nio_tracemop.sh` | End-to-end orchestrator for NIO flaky tests. It generates a JUnit wrapper that runs the victim twice in one JVM, traces Fixed and Flaky wrapper executions, prompts the LLM, applies the fix, and verifies that the patched wrapper passes both invocations. |
 | `TraceMop Scripts/run_od_tracemop.sh` | End-to-end orchestrator for OD flaky tests. It runs the polluter and victim in deterministic order on Fixed and Flaky variants, collects and compares TraceMOP traces, invokes the LLM repair flow, and verifies the patched Flaky variant with the same ordered test run. |
 | `TraceMop Scripts/run_pass_at_k.py` | Live-mode batch wrapper (Section 3) for repeated experiments across models and runs. It selects the correct per-type orchestrator from `test_config.csv`, toggles the RV/no-RV prompt ablation, archives each run, writes per-container `summary.csv` + `summary.md` (pass-at-k report with diagnosis snippets and artifact links), and appends the top-level `Complete Containers Summary.csv`. |
-| `TraceMop Scripts/simulate_run_pass_at_k.py` | Replay-mode batch wrapper (Section 2). Mirrors `run_pass_at_k.py` end-to-end but injects `SIMULATE_FROM` so the LLM step replays from the archives at `data/FULL RUNS: <RV\|NO RV>/`. Output goes under `data/SIMULATED RUNS: <RV\|NO RV>/`; cross-invocation log is `Simulated Complete Containers Summary.csv`. Pre-validates archive presence, clamps `--runs` to 2, and does not require API keys. |
+| `TraceMop Scripts/simulate_run_pass_at_k.py` | Replay-mode batch wrapper (Section 2). Mirrors `run_pass_at_k.py` end-to-end but injects `SIMULATE_FROM` so the LLM step replays from the archives at `data/FULL_RUNS_<RV\|NO_RV>/`. Output goes under `data/SIMULATED_RUNS_<RV\|NO_RV>/`; cross-invocation log is `Simulated Complete Containers Summary.csv`. Pre-validates archive presence, clamps `--runs` to 2, and does not require API keys. |
 | `TraceMop Scripts/run_td_tracemop.sh` | End-to-end orchestrator for TD flaky tests. It materializes Fixed and FlakyCodeChange variants, traces both, compares runtime behavior, assembles the TD prompt, calls the LLM, applies the patch, and verifies the patched victim test. |
 
 

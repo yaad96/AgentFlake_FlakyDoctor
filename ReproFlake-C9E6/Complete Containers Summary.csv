@@ -98,3 +98,10 @@
 "2026-05-04T05:15:36+00:00","ZOOKEEPER-2181","td","claude","run 2","FAILED","4","no","yes","FAILED","test_failed","42193","11526","53719","164.2"
 "2026-05-04T05:19:14+00:00","ZOOKEEPER-2181","td","openai","run 1","FAILED","4","no","yes","FAILED","test_failed","27341","2089","29430","24.8"
 "2026-05-04T05:22:48+00:00","ZOOKEEPER-2181","td","openai","run 2","FAILED","3","no","yes","FAILED","compile_failed","21987","1934","23921","22.1"
+"2026-05-09T08:26:58+00:00","OOZIE-3683","td","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-09T08:31:30+00:00","OOZIE-3683","td","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-09T08:43:34+00:00","APEXCORE-403","td","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-09T08:44:44+00:00","APEXCORE-403","td","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-09T08:45:52+00:00","APEXCORE-403","td","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-09T08:47:09+00:00","APEXCORE-403","td","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"

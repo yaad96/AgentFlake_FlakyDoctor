@@ -13,7 +13,7 @@ directly by the bash orchestrator.
 
 Required env:
     SIMULATE_FROM=<archive Steps Output Files dir>, e.g.
-    data/FULL RUNS: RV/<container> runs/Claude/run 1/Steps Output Files/
+    data/FULL_RUNS_RV/<container> runs/Claude/run 1/Steps Output Files/
 
 Hard-fails with a clear message if a needed turn file is missing in the
 archive — typically because the simulated pipeline diverged from the

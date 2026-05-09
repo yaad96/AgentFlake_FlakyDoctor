@@ -3,7 +3,7 @@
 simulate_run_pass_at_k.py — replay-mode pass@k harness.
 
 Mirrors run_pass_at_k.py end-to-end except every LLM call is replayed from
-a previously-archived run under data/FULL RUNS: RV/ or data/FULL RUNS: NO RV/.
+a previously-archived run under data/FULL_RUNS_RV/ or data/FULL_RUNS_NO_RV/.
 Used for reproducibility checks: the deterministic parts of the pipeline
 (extract sources, mvn, traces, RV analysis, apply patch, recompile, verify)
 run for real; only the LLM step is fed canned responses from disk.
@@ -14,8 +14,8 @@ Usage:
 
 --rv-traces selects BOTH the LLM-context variant (same as run_pass_at_k.py)
 AND the source archive to replay from. Output goes to:
-    data/SIMULATED RUNS: RV/<container> runs/<Model>/run <N>/   (if yes)
-    data/SIMULATED RUNS: NO RV/<container> runs/<Model>/run <N>/ (if no)
+    data/SIMULATED_RUNS_RV/<container> runs/<Model>/run <N>/   (if yes)
+    data/SIMULATED_RUNS_NO_RV/<container> runs/<Model>/run <N>/ (if no)
 
 --runs is clamped to 2 because that's what's archived. The simulator
 pre-validates that every (model, run) source has at least
@@ -186,10 +186,10 @@ def main():
     )
     ap.add_argument("container")
     ap.add_argument("--rv-traces", choices=["yes", "no"], required=True,
-                    help="ablation switch: 'yes' replays from data/FULL RUNS: RV/ "
-                         "and writes to data/SIMULATED RUNS: RV/; 'no' replays from "
-                         "data/FULL RUNS: NO RV/ and writes to "
-                         "data/SIMULATED RUNS: NO RV/. Required.")
+                    help="ablation switch: 'yes' replays from data/FULL_RUNS_RV/ "
+                         "and writes to data/SIMULATED_RUNS_RV/; 'no' replays from "
+                         "data/FULL_RUNS_NO_RV/ and writes to "
+                         "data/SIMULATED_RUNS_NO_RV/. Required.")
     ap.add_argument("--models", default="claude,openai")
     ap.add_argument("--runs", type=int, default=2,
                     help="number of runs per model (max 2; archive only has 2). "
@@ -209,11 +209,11 @@ def main():
 
     row, test_type, script = preflight(args.container, models)
 
-    sim_dir_name = "SIMULATED RUNS: RV" if args.rv_traces == "yes" else "SIMULATED RUNS: NO RV"
+    sim_dir_name = "SIMULATED_RUNS_RV" if args.rv_traces == "yes" else "SIMULATED_RUNS_NO_RV"
     runs_root = DATA_DIR / sim_dir_name / f"{args.container} runs"
     runs_root.mkdir(parents=True, exist_ok=True)
 
-    src_dir_name = "FULL RUNS: RV" if args.rv_traces == "yes" else "FULL RUNS: NO RV"
+    src_dir_name = "FULL_RUNS_RV" if args.rv_traces == "yes" else "FULL_RUNS_NO_RV"
     src_root = DATA_DIR / src_dir_name / f"{args.container} runs"
 
     print(f"[sim] container={args.container}  test_type={test_type}  "

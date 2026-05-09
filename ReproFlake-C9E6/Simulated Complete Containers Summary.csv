@@ -18,3 +18,73 @@
 "2026-05-08T12:43:25+00:00","elasticjobf0d","nio","claude","run 2","PASSED","1","no","no","PASSED","","6128","2244","8372","25.0"
 "2026-05-08T12:47:43+00:00","elasticjobf0d","nio","openai","run 1","PASSED","2","no","no","PASSED","","10940","975","11915","6.6"
 "2026-05-08T12:54:18+00:00","elasticjobf0d","nio","openai","run 2","FAILED","4","no","yes","FAILED","test_failed","27726","1889","29615","16.0"
+
+"2026-05-08T16:54:49+00:00","fastjson97ee7b6test_for_issue5","id","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T16:54:49+00:00","fastjson97ee7b6test_for_issue5","id","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T16:54:49+00:00","fastjson97ee7b6test_for_issue5","id","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T16:54:49+00:00","fastjson97ee7b6test_for_issue5","id","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T17:00:59+00:00","jnrposixd9f3f84","od","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:00:59+00:00","jnrposixd9f3f84","od","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:00:59+00:00","jnrposixd9f3f84","od","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:00:59+00:00","jnrposixd9f3f84","od","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T17:03:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:03:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:03:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:03:47+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T17:05:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:05:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:05:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:05:46+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T17:27:07+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 1","PASSED","4","yes","yes","FAILED","compile_failed","53897","10163","64060","115.8"
+"2026-05-08T17:27:23+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 2","PASSED","2","yes","no","PASSED","","19747","8437","28184","271.8"
+"2026-05-08T17:27:36+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 1","FAILED","4","yes","yes","FAILED","compile_failed","34112","1303","35415","15.9"
+"2026-05-08T17:27:49+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 2","FAILED","4","yes","yes","FAILED","compile_failed","31684","1567","33251","22.2"
+
+"2026-05-08T17:30:12+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 1","PASSED","4","yes","yes","FAILED","compile_failed","53897","10163","64060","115.8"
+"2026-05-08T17:30:17+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 2","PASSED","2","yes","no","PASSED","","19747","8437","28184","271.8"
+"2026-05-08T17:30:24+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 1","FAILED","4","yes","yes","FAILED","compile_failed","34112","1303","35415","15.9"
+"2026-05-08T17:30:28+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 2","FAILED","4","yes","yes","FAILED","compile_failed","31684","1567","33251","22.2"
+
+"2026-05-08T17:41:31+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:41:35+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:41:41+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:41:47+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T17:47:15+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:47:16+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:47:19+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:47:20+00:00","commonslang1163e17testReflectionHashCodeExcludeFields","id","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T17:48:01+00:00","jnrposixd9f3f84","od","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:48:01+00:00","jnrposixd9f3f84","od","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:48:01+00:00","jnrposixd9f3f84","od","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T17:48:01+00:00","jnrposixd9f3f84","od","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T18:06:07+00:00","jnrposixd9f3f84","od","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:06:07+00:00","jnrposixd9f3f84","od","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:06:07+00:00","jnrposixd9f3f84","od","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:06:08+00:00","jnrposixd9f3f84","od","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T18:08:12+00:00","jnrposixd9f3f84","od","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:08:13+00:00","jnrposixd9f3f84","od","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:08:13+00:00","jnrposixd9f3f84","od","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:08:14+00:00","jnrposixd9f3f84","od","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T18:10:18+00:00","jnrposixd9f3f84","od","claude","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:10:18+00:00","jnrposixd9f3f84","od","claude","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:10:18+00:00","jnrposixd9f3f84","od","openai","run 1","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+"2026-05-08T18:10:18+00:00","jnrposixd9f3f84","od","openai","run 2","INCOMPLETE","0","yes","no","INCOMPLETE","","0","0","0","0.0"
+
+"2026-05-08T19:02:43+00:00","jsonschemacore7dbae50multipleSchemaDepViolation","id","claude","run 1","PASSED","1","yes","no","PASSED","","7757","1861","9618","25.0"
+"2026-05-08T19:17:41+00:00","jsonschemacore7dbae50multipleSchemaDepViolation","id","claude","run 2","PASSED","1","yes","no","PASSED","","8101","1912","10013","29.8"
+"2026-05-08T19:30:32+00:00","jsonschemacore7dbae50multipleSchemaDepViolation","id","openai","run 1","FAILED","3","yes","yes","FAILED","test_failed","21760","1623","23383","18.9"
+"2026-05-08T19:36:06+00:00","jsonschemacore7dbae50multipleSchemaDepViolation","id","openai","run 2","INCOMPLETE","2","yes","no","INCOMPLETE","","13073","828","13901","8.6"
+
+"2026-05-08T21:57:49+00:00","BOOKKEEPER-846","td","claude","run 1","PASSED","1","yes","no","PASSED","","11145","2307","13452","38.5"
+"2026-05-08T22:05:23+00:00","BOOKKEEPER-846","td","claude","run 2","PASSED","2","yes","no","PASSED","","24028","2863","26891","54.4"
+"2026-05-08T22:15:25+00:00","BOOKKEEPER-846","td","openai","run 1","FAILED","3","yes","yes","FAILED","test_failed","30894","2377","33271","25.3"
+"2026-05-08T22:24:48+00:00","BOOKKEEPER-846","td","openai","run 2","FAILED","4","yes","yes","FAILED","compile_failed","43796","1883","45679","29.6"

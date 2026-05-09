@@ -14,9 +14,9 @@ Usage:
 
 --rv-traces selects the LLM-context variant for the ablation:
   yes -> include the RV TRACE ANALYSIS section; archive under
-         data/FULL RUNS: RV/<container> runs/
+         data/FULL_RUNS_RV/<container> runs/
   no  -> omit the RV TRACE ANALYSIS section from the LLM context; archive
-         under data/FULL RUNS: NO RV/<container> runs/
+         under data/FULL_RUNS_NO_RV/<container> runs/
 
 Every invocation re-runs all requested (model, run) combinations end-to-end,
 overwriting any prior per-run folder for those combinations.
@@ -690,8 +690,8 @@ def main():
     ap.add_argument("--rv-traces", choices=["yes", "no"], required=True,
                     help="ablation switch: 'yes' includes the RV TRACE "
                          "ANALYSIS section in the LLM context and archives "
-                         "under data/FULL RUNS: RV/; 'no' omits the section "
-                         "and archives under data/FULL RUNS: NO RV/. "
+                         "under data/FULL_RUNS_RV/; 'no' omits the section "
+                         "and archives under data/FULL_RUNS_NO_RV/. "
                          "Required, no default.")
     ap.add_argument("--models", default="claude,openai")
     ap.add_argument("--runs", type=int, default=3)
@@ -709,7 +709,7 @@ def main():
     # archived source tree show up as untracked (thousands of files) until
     # the user adds a separate gitignore entry. The RV/NO-RV split keeps the
     # two ablation modes' archives in separate trees so they don't collide.
-    rv_dir_name = "FULL RUNS: RV" if args.rv_traces == "yes" else "FULL RUNS: NO RV"
+    rv_dir_name = "FULL_RUNS_RV" if args.rv_traces == "yes" else "FULL_RUNS_NO_RV"
     runs_root = DATA_DIR / rv_dir_name / f"{args.container} runs"
     runs_root.mkdir(parents=True, exist_ok=True)
     print(f"[wrapper] container={args.container}  test_type={test_type}  "
