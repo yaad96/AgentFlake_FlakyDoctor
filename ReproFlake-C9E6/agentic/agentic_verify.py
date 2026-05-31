@@ -103,9 +103,20 @@ def _build_command(test_type: str, row: dict) -> str:
             f"-Dsurefire.runOrder=testorder {timeout} {MVNOPTS_OD} 2>&1"
         )
     if test_type == "td":
+        # NOTE: deliberately NO `-Dmaven.ext.class.path={EXT_JAR}` here, for
+        # the same reason as the ID branch below. TD verify just reruns the
+        # failing test and checks if it now passes; it doesn't need JavaMOP/
+        # TraceMOP instrumentation. Passing the ext jar perturbs the effective
+        # surefire version, which breaks on projects whose poms pin an older
+        # surefire (e.g. HBASE-27051's pom uses 3.0.0-M6 -> ext jar bumps to
+        # 3.1.2 -> NoClassDefFoundError on
+        # org.apache.maven.surefire.api.util.TempFileManager -> "Tests run: 0"
+        # -> _interpret() defaults to FAILED even when the agent's fix is
+        # correct). Trace collection still uses the ext jar in
+        # _compute_rv_traces_lazy.
         return (
             "cd /app/work/Flaky\n"
-            f"mvn surefire:test -Dmaven.ext.class.path={EXT_JAR} "
+            f"mvn surefire:test "
             f"-pl {module} -Dtest='{victim}' {timeout} {MVNOPTS_TD} 2>&1"
         )
     if test_type == "id":

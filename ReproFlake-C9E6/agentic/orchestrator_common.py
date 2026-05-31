@@ -288,15 +288,15 @@ def run_verify(container: str, docker_container: str) -> tuple[str, str]:
 def classify_failure(apply_report: dict, verdict: str) -> str:
     """Mirror feedback_loop.sh's classifier so the agent sees the same
     category names it might already have seen examples of."""
+    if verdict == "PASSED":
+        return "N/A"
     result = apply_report.get("result") or {}
     if not result.get("ok") and result.get("layer") in (None, "none"):
         return "patch_apply_failed"
     rc = apply_report.get("recompile") or {}
     if rc.get("ok") is False and not rc.get("skipped"):
         return "compile_failed"
-    if verdict != "PASSED":
-        return "test_failed"
-    return "unknown_failure"
+    return "test_failed"
 
 
 def restrategy_hint(category: str) -> str:
@@ -448,10 +448,12 @@ def write_run_summary(path: Path, container: str, model: str,
             conf_str = (", ".join(f"run_{r['run']}={r['verdict']}"
                                   for r in confirms)
                         if confirms else "")
+            verdict = row["verdict"]
+            category = "N/A" if verdict == "PASSED" else row.get("category", "")
             w.writerow({
                 "iteration":      row["iteration"],
-                "verdict":        row["verdict"],
-                "category":       row.get("category", ""),
+                "verdict":        verdict,
+                "category":       category,
                 "applied_ok":     "yes" if row.get("applied_ok") else "no",
                 "tools_sequence": _tool_sequence_str(row.get("tools_used", [])),
                 "tool_counts":    _tool_counts_str(row.get("tools_used", [])),
@@ -464,7 +466,7 @@ def write_run_summary(path: Path, container: str, model: str,
         w.writerow({
             "iteration":      "SUMMARY",
             "verdict":        final_verdict,
-            "category":       "",
+            "category":       "N/A" if final_verdict == "PASSED" else "",
             "applied_ok":     f"{submit_attempts}/{max_iters}",
             "tools_sequence": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "tool_counts":    f"model={model} test_type={test_type}",

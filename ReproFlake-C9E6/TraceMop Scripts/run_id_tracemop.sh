@@ -560,11 +560,19 @@ verify_victim() {
   # NonDex runs N independent surefire iterations; each one gets its own
   # 180s budget. Without this, an LLM-patched test that busy-loops or
   # deadlocks could hang ID verification indefinitely.
+  #
+  # NOTE: deliberately NO `-Dmaven.ext.class.path=$EXT_JAR` here. NonDex only
+  # needs to shuffle iteration orders and run surefire; it does not need
+  # JavaMOP/TraceMOP instrumentation. Passing the ext jar makes the extension
+  # auto-bump surefire, which breaks on projects whose poms use parameters
+  # newer surefire removed (e.g. dubbo's <forkMode> -> "Cannot find 'forkMode'"
+  # -> 0 surefire summary lines -> false-FAILED even when the fix is correct).
+  # Trace collection earlier in this script still uses the ext jar, as it
+  # should.
   docker exec "$CONTAINER" bash -c "
     cd /app/work/Flaky
     mvn edu.illinois:nondex-maven-plugin:2.1.1:nondex \
       -DnondexSeed=$NONDEXSEED -DnondexRuns=$NONDEX_RUNS \
-      -Dmaven.ext.class.path=$EXT_JAR \
       -pl '$MODULE' \
       -Dtest='$VICTIM' \
       -Dsurefire.timeout=180 \

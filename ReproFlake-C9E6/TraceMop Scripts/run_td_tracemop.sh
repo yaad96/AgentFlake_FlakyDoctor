@@ -402,10 +402,17 @@ verify_victim() {
   # it, an LLM-patched test that busy-loops or deadlocks hangs the wrapper
   # indefinitely (observed on curator-681). 180s is ~3× the longest
   # known-good TD test wall time.
+  #
+  # NOTE: deliberately NO `-Dmaven.ext.class.path=$EXT_JAR` here. Verify just
+  # reruns the failing test against the patched Flaky/; it does not need
+  # JavaMOP/TraceMOP instrumentation. Passing the ext jar makes the extension
+  # auto-bump surefire (e.g. hbase pom 3.0.0-M6 -> 3.1.2), which then crashes
+  # with NoClassDefFoundError: org.apache.maven.surefire.api.util.TempFileManager
+  # -> "Tests run: 0" -> false-FAILED even when the fix is correct. Trace
+  # collection earlier in this script still uses the ext jar, as it should.
   docker exec "$CONTAINER" bash -c "
     cd /app/work/Flaky
     mvn surefire:test \
-      -Dmaven.ext.class.path=$EXT_JAR \
       -pl $MODULE \
       -Dtest='$VICTIM' \
       -Dsurefire.timeout=180 \

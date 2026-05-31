@@ -94,6 +94,21 @@ def _resolve_path(flaky_root: Path, rel_path: str):
     if not rel_path:
         return None
     norm = rel_path.replace("\\", "/").lstrip("/")
+    # Agents (and the tools they read) sometimes emit paths anchored at
+    # `Flaky/...` or even at the docker-side `/app/work/Flaky/...`, while
+    # this function expects rel_path relative to flaky_root (i.e. with the
+    # `Flaky/` component already stripped). Strip it ourselves so the agent
+    # doesn't burn an iteration on a "no unique suffix match" miss. Also
+    # handle the orchestrator's pristine snapshot dir for symmetry.
+    for marker in ("/Flaky/", "/Flaky.pristine/"):
+        if marker in norm:
+            norm = norm.split(marker, 1)[1]
+            break
+    else:
+        for prefix in ("Flaky/", "Flaky.pristine/"):
+            if norm.startswith(prefix):
+                norm = norm[len(prefix):]
+                break
     full = flaky_root / norm
     if full.is_file():
         return norm
