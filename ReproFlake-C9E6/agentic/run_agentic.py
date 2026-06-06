@@ -43,7 +43,7 @@ PASS_AT_K      = SCRIPT_DIR / "run_agentic_pass_at_k.py"
 sys.path.insert(0, str(SCRIPT_DIR))
 import agentic_config  # type: ignore  # noqa: E402
 
-SUPPORTED_TYPES = {"od", "td", "id", "nio", "unclassified", "brittle", "britle"}
+SUPPORTED_TYPES = {"od", "td", "id", "nio", "unclassified", "unassigned", "brittle", "britle"}
 
 
 # ---------------------------------------------------------------------------

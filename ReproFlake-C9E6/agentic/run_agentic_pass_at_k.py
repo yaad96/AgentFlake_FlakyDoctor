@@ -48,6 +48,7 @@ TYPE_TO_SCRIPT = {
     "id":           SCRIPT_DIR / "run_agentic_id.sh",
     "nio":          SCRIPT_DIR / "run_agentic_nio.sh",
     "unclassified": SCRIPT_DIR / "run_agentic_unclassified.sh",
+    "unassigned":   SCRIPT_DIR / "run_agentic_unclassified.sh",
     "brittle":      SCRIPT_DIR / "run_agentic_brittle.sh",
     "britle":       SCRIPT_DIR / "run_agentic_brittle.sh",  # CSV typo alias
 }

@@ -2,7 +2,7 @@
 
 ## What Brittle means
 
-A Brittle test is structurally identical to an OD test: a polluter test runs
+A Brittle test is structurally identical to an Order Dependent flaky test: a polluter test runs
 immediately before the victim and leaves shared state dirty, causing the victim
 to fail. The only difference from OD is that the root cause is typically more
 subtle — often a singleton reset, a cached configuration, or a lazily-initialized

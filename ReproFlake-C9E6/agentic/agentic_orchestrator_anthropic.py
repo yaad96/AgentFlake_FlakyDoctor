@@ -135,17 +135,29 @@ def run(args: argparse.Namespace) -> None:
         submitted_this_iter = False
         tools_used_this_iter: list[str] = []
 
+        submit_only_tools = [t for t in tools if t["name"] == "submit_patch"]
+        max_context_tools = max(0, MAX_TOOL_TURNS_PER_ITERATION - 1)
         while tool_turn < MAX_TOOL_TURNS_PER_ITERATION:
             tool_turn += 1
             t0 = time.time()
-            response = client.messages.create(
-                model=args.model,
-                max_tokens=MAX_TOKENS,
-                temperature=TEMPERATURE,
-                system=SYSTEM_PROMPT,
-                tools=tools,
-                messages=messages,
+            force_submit = (
+                tool_turn == MAX_TOOL_TURNS_PER_ITERATION
+                or len(tools_used_this_iter) >= max_context_tools
             )
+            create_kwargs = {
+                "model": args.model,
+                "max_tokens": MAX_TOKENS,
+                "temperature": TEMPERATURE,
+                "system": SYSTEM_PROMPT,
+                "tools": submit_only_tools if force_submit else tools,
+                "messages": messages,
+            }
+            if force_submit:
+                create_kwargs["tool_choice"] = {
+                    "type": "tool",
+                    "name": "submit_patch",
+                }
+            response = client.messages.create(**create_kwargs)
             elapsed = time.time() - t0
             total_elapsed += elapsed
             usage = _usage_dict(response)
@@ -175,6 +187,17 @@ def run(args: argparse.Namespace) -> None:
             if submit_tu is None:
                 tool_results_block: list[dict] = []
                 for tu in tool_uses:
+                    if len(tools_used_this_iter) >= max_context_tools:
+                        tool_results_block.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": (
+                                "(skipped: context-tool budget exhausted; "
+                                "submit_patch is now required)"
+                            ),
+                            "is_error": True,
+                        })
+                        continue
                     tools_used_this_iter.append(tu["name"])
                     result_text = agent_tools.dispatch_tool(
                         args.container, tu["name"], tu["input"] or {})

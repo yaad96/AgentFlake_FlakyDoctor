@@ -156,6 +156,12 @@ def _build_command(test_type: str, row: dict) -> str:
             f"mvn test -Dmaven.ext.class.path={EXT_JAR} -pl {module} -am "
             f"-Dtest='{wrapper}#runTwice' {timeout} {MVNOPTS_NIO} 2>&1"
         )
+    if test_type in ("unclassified", "unassigned"):
+        return (
+            "cd /app/work/Flaky\n"
+            f"mvn test -pl '{module}' -Dtest='{victim}' "
+            f"{timeout} {MVNOPTS_TD} 2>&1"
+        )
     sys.exit(f"ERROR: unsupported test_type '{test_type}' for agentic verify.")
 
 
@@ -195,7 +201,7 @@ def main():
     if not row:
         sys.exit(f"ERROR: container '{args.container}' not in test_config.csv")
     test_type = (row.get("test_type") or "").strip().lower()
-    if test_type not in {"od", "td", "id", "nio"}:
+    if test_type not in {"od", "td", "id", "nio", "unclassified", "unassigned"}:
         sys.exit(f"ERROR: unsupported test_type '{test_type}'")
 
     docker_container = args.docker_container or (

@@ -300,6 +300,8 @@ def get_error_logs(container: str, log_type: str = "test_failure") -> str:
 # Tool 4: get_flaky_example
 # ---------------------------------------------------------------------------
 
+_NO_EXAMPLE_TYPES = {"unclassified", "unassigned"}
+
 _CATEGORY_ALIASES = {
     "od": "od", "order-dependent": "od", "brittle": "od", "britle": "od",
     "td": "td", "timing-dependent": "td",
@@ -319,15 +321,26 @@ def get_flaky_example(category: str | None = None,
     """
     canon = None
     if category and category.strip():
-        canon = _CATEGORY_ALIASES.get(category.strip().lower())
+        requested = category.strip().lower()
+        if requested in _NO_EXAMPLE_TYPES:
+            return ("(get_flaky_example is unavailable for Unclassified/"
+                    "Unassigned flaky-test types because no category-specific "
+                    "exemplar exists. Use get_test_code, get_code, and error "
+                    "logs instead.)")
+        canon = _CATEGORY_ALIASES.get(requested)
         if not canon:
             return (f"(unknown category '{category}'; supported: "
                     f"OD, TD, ID, NIO)")
     if not canon and container:
         row = load_csv_row(container)
         if row:
-            canon = _CATEGORY_ALIASES.get(
-                (row.get("test_type") or "").strip().lower())
+            test_type = (row.get("test_type") or "").strip().lower()
+            if test_type in _NO_EXAMPLE_TYPES:
+                return ("(get_flaky_example is unavailable for Unclassified/"
+                        "Unassigned flaky-test types because no category-specific "
+                        "exemplar exists. Use get_test_code, get_code, and error "
+                        "logs instead.)")
+            canon = _CATEGORY_ALIASES.get(test_type)
     if not canon:
         return ("(category required when container is unknown; "
                 "supported: OD, TD, ID, NIO)")

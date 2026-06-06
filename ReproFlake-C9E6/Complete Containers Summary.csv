@@ -207,3 +207,19 @@
 
 "2026-05-31T16:55:31+00:00","jnrposixd9f3f84","od","gpt-4o","run_1","PASSED","agentic","188799","1503","190302","26.2"
 "2026-05-31T16:59:06+00:00","jnrposixd9f3f84","od","gpt-4o","run_2","PASSED","agentic","172334","953","173287","22.7"
+
+"2026-06-01T17:42:19+00:00","HBASE-27051","td","claude-sonnet-4-6","run_1","PASSED","agentic","312021","7477","319498","140.4"
+
+"2026-06-01T17:52:10+00:00","HBASE-27051","td","claude-sonnet-4-6","run_1","PASSED","agentic","299949","5660","305609","109.1"
+
+"2026-06-04T17:55:47+00:00","dubbodubbocommon690d397testGetAllDeclaredAnnotations","id","claude-sonnet-4-6","run_1","PASSED","agentic","233401","9655","243056","373.3"
+
+"2026-06-04T18:22:45+00:00","dubbodubbocommon690d397testGetAllDeclaredAnnotations","id","claude-sonnet-4-6","run_1","PASSED","agentic","241194","7608","248802","355.5"
+
+"2026-06-04T19:32:25+00:00","HBASE-27051","td","claude-sonnet-4-6","run_1","PASSED","agentic","59762","2111","61873","58.2"
+
+"2026-06-04T19:55:39+00:00","HBASE-27051","td","claude-sonnet-4-6","run_1","PASSED","agentic","59629","2236","61865","63.5"
+
+"2026-06-04T21:00:17+00:00","HBASE-27051","td","claude-sonnet-4-6","run_1","PASSED","agentic","55206","2149","57355","45.5"
+
+"2026-06-05T17:07:05+00:00","HBASE-27051","td","claude-sonnet-4-6","run_1","PASSED","agentic","59499","2244","61743","62.4"

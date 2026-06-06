@@ -7,8 +7,6 @@ same JVM, because it pollutes shared static state that its own second
 invocation then reads. The test IS its own polluter — across
 invocations of itself within one process.
 
-Definition: Wei et al., ICSE 2022 — "Preempting Flaky Tests via
-Non-Idempotent-Outcome Tests".
 
 ## How to diagnose
 

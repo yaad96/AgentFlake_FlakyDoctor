@@ -46,9 +46,12 @@ DEFAULT_MAX_ITERATIONS       = agentic_config.MAX_ITERATIONS
 TOOL_OUTPUT_MAX_CHARS        = agentic_config.TOOL_OUTPUT_MAX_CHARS
 VERIFY_PASS_RUNS             = agentic_config.VERIFY_PASS_RUNS
 
-SUPPORTED_TEST_TYPES = {"od", "td", "id", "nio", "unclassified", "brittle"}
+SUPPORTED_TEST_TYPES = {"od", "td", "id", "nio", "unclassified", "unassigned", "brittle"}
 
-SYSTEM_PROMPT = prompts.SYSTEM_PROMPT
+SYSTEM_PROMPT = prompts.SYSTEM_PROMPT.format(
+    max_tool_turns=MAX_TOOL_TURNS_PER_ITERATION,
+    max_context_tools=max(0, MAX_TOOL_TURNS_PER_ITERATION - 1),
+)
 
 _PRETTY_TYPE = {
     "od":           "OD (Order-Dependent — a polluter test corrupts shared state)",
@@ -59,6 +62,8 @@ _PRETTY_TYPE = {
                     "structurally identical to OD)",
     "unclassified": "Unclassified (root cause unknown — no category-specific exemplar "
                     "is available; diagnose from code and error logs alone)",
+    "unassigned":   "Unassigned (root cause unknown — get_flaky_example is unavailable; "
+                    "diagnose from test code, relevant source, and error logs only)",
 }
 
 
@@ -82,6 +87,7 @@ def build_initial_user_prompt(container: str, row: dict,
         victim_fqn   = victim_fqn,
         module       = module,
         java_line    = f"Java:       {java_ver}\n" if java_ver else "",
+        test_code    = agent_tools.get_test_code(container).strip(),
         failure_text = failure_text.strip() or "(no failure block was extracted)",
     ).rstrip() + "\n"
 

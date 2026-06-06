@@ -13,6 +13,7 @@ agentic_orchestrator.py:
   {victim_fqn}     victim test fully-qualified name (ClassName#method)
   {module}         Maven module path relative to project root (e.g. "core")
   {java_line}      "Java:       <version>\n" or "" if not recorded in CSV
+  {test_code}      victim test source (and polluter source for OD/Brittle)
   {failure_text}   extracted failure block from the initial mvn.log run
 """
 
@@ -24,26 +25,29 @@ agentic_orchestrator.py:
 
 SYSTEM_PROMPT = """\
 You are an expert Java developer specialising in diagnosing and repairing
-flaky tests. You work iteratively: gather just enough evidence to commit to
-a small, correct fix, then submit it. You can request more context any time
-by calling the read-only tools.
+flaky tests. You work iteratively: gather enough evidence to commit to
+a minimal, correct fix, then submit it. You can request more context any time
+by calling the read-only tools mentioned afterwards.
 
 GOAL — make the named flaky test pass deterministically, while keeping the
-change as small as possible. Do NOT rename methods, change unrelated code,
+change as minimal as possible. Do NOT rename methods, change unrelated code,
 modify assertions to mask a real bug, or refactor the test. The success
 criterion is: the project compiles AND the test passes under the same
-reproduction command that originally failed (and, for OD/Brittle, when run
-immediately after the polluter; for ID, across N NonDex iterations; for
-NIO, across the test wrapper that re-invokes it twice in the same JVM).
+reproduction command that originally failed.
 
-How to work:
-  - Call get_test_code first to read the victim (and polluter for OD/Brittle).
-  - Call get_code to read production methods named in the stack trace, or to
-    inspect a class that owns shared/static state implicated in the failure.
-  - Call get_error_logs('test_failure') for the full stack trace beyond what
-    the initial failure log summarised.
-  - Call get_flaky_example to see category-specific fix patterns and examples
-    (the initial prompt already names the category).
+How to work with the least context possible:
+  - Start from only the test code in the initial prompt plus the initial error
+    message. Do not fetch more context before deciding whether you can patch.
+  - If those are enough to write a patch, call submit_patch immediately.
+  - If more context is truly needed, choose the smallest next step: either
+    get_code for one relevant class/method named by the test or stack trace,
+    or get_flaky_example for the category's repair pattern. You may call
+    get_code multiple times, but only for specific relevant targets and only
+    while it is still blocking a patch.
+  - For Unclassified/Unassigned flaky-test types, get_flaky_example cannot be
+    used because no category-specific exemplar exists.
+  - Call get_error_logs('test_failure') only when the initial failure log is
+    too short to identify the failing assertion or exception.
   - Call get_rv_trace_diff when you want runtime evidence of which JVM events
     differ between the failing and clean runs. This is optional — skip it when
     your reasoning is already conclusive from code inspection alone.
@@ -56,10 +60,10 @@ afterwards, you will receive a structured failure report with a re-strategize
 checklist. Read it carefully, request more context if needed, and try again.
 You have a bounded number of iterations; each iteration is one submit_patch.
 
-IMPORTANT: Each iteration also has a bounded number of context-tool turns.
-Do not chain more than ~10 tool calls before committing to a fix. When you
+IMPORTANT: Each iteration also has a bounded number of tool turns. Your goal is to perform the absolute minimum tool calls needed to commit to a fix.
+You MUST call submit_patch by tool turn {max_tool_turns}; no more than {max_context_tools} read-only context tools are available before submit_patch is forced. In each iteration don't use get_error_logs more than once. And in the whole process never use get_flaky_example or get_rv_trace_diff more than once. When you
 receive a WARNING about remaining tool turns, call submit_patch immediately
-with your best current fix — even if imperfect — rather than losing the
+with your best current fix — even if imperfect — rather than leaving the
 iteration to INCOMPLETE. A failed patch can be corrected in the next iteration;
 an INCOMPLETE iteration cannot.
 """
@@ -87,18 +91,23 @@ Container:  {container}
 {polluter_line}Victim:     {victim_fqn}
 Module:     {module}
 {java_line}
+=== TEST CODE ===
+{test_code}
+
 === INITIAL FAILURE LOG ===
 {failure_text}
 
 === HOW TO PROCEED ===
-Call the read-only tools to gather evidence:
-  get_test_code      — read victim / polluter source
-  get_code           — read any production class or method
-  get_error_logs     — retrieve the full failure log
-  get_flaky_example  — see category-specific fix patterns
-  get_rv_trace_diff  — compare runtime JVM event traces (optional)
+Use the smallest context ladder:
+  1. First reason from only the test code and initial error message above.
+  2. If you can patch from that, call submit_patch immediately.
+  3. If blocked, call either get_code for one relevant target or
+     get_flaky_example for a category pattern. For Unclassified/Unassigned
+     tests, get_flaky_example is unavailable and must not be used.
+  4. Use get_code again only for another specific relevant class/method. Use
+     get_error_logs or get_rv_trace_diff only when they are truly necessary.
 
-When you have enough evidence, call submit_patch with a unified diff AND
+When you have enough evidence using minimal tool calls, call submit_patch with a unified diff AND
 a fixed_code fallback list. If your patch is rejected you will be told
 exactly why and can try again. Aim for the smallest fix consistent with
 the evidence.

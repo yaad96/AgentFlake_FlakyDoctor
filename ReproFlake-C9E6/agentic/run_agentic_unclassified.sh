@@ -41,8 +41,8 @@ IFS=',' read -r TEST_TYPE _RC ZIP MODULE POLLUTER VICTIM ITERATIONS CONFIG JAVA 
 
 # Accept both capitalisation variants and the brittle-in-wrong-column edge case
 TTYPE_LOWER=$(echo "$TEST_TYPE" | tr '[:upper:]' '[:lower:]')
-if [[ "$TTYPE_LOWER" != "unclassified" ]]; then
-  echo "ERROR: this script targets Unclassified only; got '$TEST_TYPE'."; exit 1
+if [[ "$TTYPE_LOWER" != "unclassified" && "$TTYPE_LOWER" != "unassigned" ]]; then
+  echo "ERROR: this script targets Unclassified/Unassigned only; got '$TEST_TYPE'."; exit 1
 fi
 
 case "$JAVA" in

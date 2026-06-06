@@ -132,7 +132,8 @@ def _parse_tool_args(raw: str | None) -> tuple[dict, str | None]:
         return {}, f"arguments were not valid JSON: {exc}"
 
 
-def _create_kwargs(model: str, messages: list[dict], tools: list[dict]) -> dict:
+def _create_kwargs(model: str, messages: list[dict], tools: list[dict],
+                   force_tool: str | None = None) -> dict:
     """Build chat.completions.create kwargs, accounting for the o-series'
     different param names/constraints (max_completion_tokens, no temperature)."""
     key = model.strip().lower()
@@ -141,7 +142,10 @@ def _create_kwargs(model: str, messages: list[dict], tools: list[dict]) -> dict:
         "model": model,
         "messages": messages,
         "tools": tools,
-        "tool_choice": "auto",
+        "tool_choice": (
+            {"type": "function", "function": {"name": force_tool}}
+            if force_tool else "auto"
+        ),
     }
     if is_o_series:
         kwargs["max_completion_tokens"] = MAX_TOKENS
@@ -198,11 +202,23 @@ def run(args: argparse.Namespace) -> None:
         submitted_this_iter = False
         tools_used_this_iter: list[str] = []
 
+        submit_only_tools = [
+            t for t in tools if t["function"]["name"] == "submit_patch"]
+        max_context_tools = max(0, MAX_TOOL_TURNS_PER_ITERATION - 1)
         while tool_turn < MAX_TOOL_TURNS_PER_ITERATION:
             tool_turn += 1
             t0 = time.time()
+            force_submit = (
+                tool_turn == MAX_TOOL_TURNS_PER_ITERATION
+                or len(tools_used_this_iter) >= max_context_tools
+            )
             response = client.chat.completions.create(
-                **_create_kwargs(args.model, messages, tools))
+                **_create_kwargs(
+                    args.model,
+                    messages,
+                    submit_only_tools if force_submit else tools,
+                    force_tool="submit_patch" if force_submit else None,
+                ))
             elapsed = time.time() - t0
             total_elapsed += elapsed
             usage = _usage_dict(response)
@@ -238,6 +254,14 @@ def run(args: argparse.Namespace) -> None:
             # ---- pure context-tool turn ---------------------------------
             if submit_tc is None:
                 for tc in tool_calls:
+                    if len(tools_used_this_iter) >= max_context_tools:
+                        messages.append({"role": "tool",
+                                         "tool_call_id": tc.id,
+                                         "content": (
+                                             "(skipped: context-tool budget "
+                                             "exhausted; submit_patch is now "
+                                             "required)")})
+                        continue
                     targs, _err = _parse_tool_args(tc.function.arguments)
                     tools_used_this_iter.append(tc.function.name)
                     result_text = agent_tools.dispatch_tool(

@@ -61,9 +61,10 @@ MAX_ITERATIONS: int = 5
 # iteration; this only counts the terminal "submit a fix" action.
 # Typical range: 3–20.
 
-MAX_TOOL_TURNS_PER_ITERATION: int = 20
-# Maximum API round-trips (context-tool calls) within a single iteration
-# before the orchestrator gives up waiting for a submit_patch.
+MAX_TOOL_TURNS_PER_ITERATION: int = 10
+# Maximum API round-trips within a single iteration before the agent must
+# submit a patch. The last turn is reserved for submit_patch only, so a value
+# of 10 means at most 9 exploratory turns before a forced patch turn.
 # Guards against a runaway exploration loop.
 
 VERIFY_PASS_RUNS: int = 5
