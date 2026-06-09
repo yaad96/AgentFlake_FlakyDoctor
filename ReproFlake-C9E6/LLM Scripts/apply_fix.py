@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1386,11 +1387,23 @@ def verify_compile(flaky_root: Path, m2_root, touched_files: list) -> dict:
 
     results = []
     for jf in java_files:
+        # The classpath (every jar under .m2) can exceed the OS single-argument
+        # limit on Linux (E2BIG / "Argument list too long"); macOS allows far
+        # larger args. Pass the options through a javac @argfile, which javac
+        # reads from disk and so bypasses the OS arg-length limit entirely.
+        argfile = None
         cmd = [javac, "-d", out_dir]
         if cp:
-            cmd += ["-cp", cp]
+            fd, argfile = tempfile.mkstemp(suffix=".javac.args")
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write('-cp "%s"\n' % cp.replace("\\", "\\\\"))
+            cmd.append("@" + argfile)
         cmd.append(str(jf))
-        r = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True)
+        finally:
+            if argfile:
+                os.unlink(argfile)
         rel = str(jf.relative_to(flaky_root)) if jf.is_relative_to(flaky_root) else str(jf)
         # Filter benign "annotation processor RELEASE_6" warnings — they're
         # noise from older deps and don't indicate a real problem.
