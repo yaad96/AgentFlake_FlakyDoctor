@@ -377,7 +377,7 @@ def run(args: argparse.Namespace) -> None:
                 break
 
             # FAILED / CONFIRM_FAILED — restore and feed back.
-            common.restore_flaky(ctx.base)
+            common.restore_flaky(ctx.base, ctx.docker_container)
             if confirm_runs:
                 confirm_summary = "\n".join(
                     f"  run {r['run']}: {r['verdict']}" for r in confirm_runs)

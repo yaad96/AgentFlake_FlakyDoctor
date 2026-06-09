@@ -227,7 +227,21 @@ def write_llm_response_json(steps_dir: Path, container: str,
     return response_path
 
 
-def restore_flaky(base: Path) -> None:
+def _reclaim_workspace_owner(docker_container: str | None) -> None:
+    """On Linux, Maven artefacts written inside the bind-mounted container are
+    owned by root and can't be removed by the host user. Use the running
+    container to chown the mounted workspace (/app/work) back to us. Harmless
+    no-op on macOS, where Docker Desktop already maps ownership to the host."""
+    if not docker_container or not hasattr(os, "getuid"):
+        return
+    subprocess.run(
+        ["docker", "exec", "-u", "0", docker_container,
+         "chown", "-R", f"{os.getuid()}:{os.getgid()}", "/app/work"],
+        capture_output=True,
+    )
+
+
+def restore_flaky(base: Path, docker_container: str | None = None) -> None:
     """Restore Flaky/ from the snapshot the per-type orchestrator made at
     step 9.5, so each submit_patch starts against a clean tree."""
     pristine = base / "Flaky.pristine"
@@ -236,7 +250,12 @@ def restore_flaky(base: Path) -> None:
         print(f"[restore] WARNING: {pristine} missing — cannot restore Flaky/.")
         return
     if flaky.is_dir():
-        shutil.rmtree(flaky)
+        try:
+            shutil.rmtree(flaky)
+        except PermissionError:
+            # Root-owned container artefacts: reclaim ownership and retry.
+            _reclaim_workspace_owner(docker_container)
+            shutil.rmtree(flaky)
     shutil.copytree(pristine, flaky, symlinks=True)
 
 
