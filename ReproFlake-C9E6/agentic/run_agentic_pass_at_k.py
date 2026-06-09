@@ -34,6 +34,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import agentic_config  # type: ignore  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -67,11 +69,12 @@ SENTINEL = ".run_complete"
 # Reuse the cross-invocation log alongside the non-agentic runs, but separate
 # by an `agentic` column so the existing reader scripts can filter. We DO use
 # the same file path so a single dashboard sees both pipelines side-by-side.
-COMPLETE_SUMMARY_FILE = REPROFLAKE_DIR / "Complete Containers Summary.csv"
+COMPLETE_SUMMARY_FILE = REPROFLAKE_DIR / "Complete_Containers_Summary.csv"
 COMPLETE_SUMMARY_COLS = [
     "timestamp", "container", "test_type", "model", "run", "final verdict",
     "rv_traces_used",
     "input_tokens", "output_tokens", "total_tokens", "llm_seconds",
+    "validation_runs", "temperature",
 ]
 
 
@@ -378,6 +381,8 @@ def append_complete_summary(rows):
             "output_tokens": r["output_tokens_total"],
             "total_tokens": r["total_tokens"],
             "llm_seconds": round(r["elapsed_llm_seconds"], 1),
+            "validation_runs": agentic_config.VERIFY_PASS_RUNS,
+            "temperature": agentic_config.TEMPERATURE,
         })
 
     if _first_append_this_process:
