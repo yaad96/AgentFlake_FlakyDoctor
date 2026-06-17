@@ -36,13 +36,29 @@ API_KEY_FILE="${API_KEY_FILE:-$HOME/.anthropic_api_key}"
 [[ -f "$API_KEY_FILE" ]]  || { echo "API key file not found at $API_KEY_FILE (set API_KEY_FILE=...)" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "docker not installed — see docker/README_reproflake_od.md" >&2; exit 1; }
 
-# Read the row's Java version (col 9) for the chosen od container (col 2).
-JAVA_VER="$(awk -F, -v c="$CONTAINER" 'tolower($1)=="od" && $2==c {print $9; exit}' "$TEST_CONFIG")"
-if [[ -z "$JAVA_VER" ]]; then
-    echo "no od row with result_container == $CONTAINER in $TEST_CONFIG" >&2
-    echo "tip: python3 src/run_reproflake.py --test-config '$TEST_CONFIG' --list" >&2
+# Read the row's test_type (col 1) and Java version (col 9) for the container (col 2).
+ROW_INFO="$(awk -F, -v c="$CONTAINER" '$2==c {print tolower($1)"|"$9; exit}' "$TEST_CONFIG")"
+if [[ -z "$ROW_INFO" ]]; then
+    echo "no row with result_container == $CONTAINER in $TEST_CONFIG" >&2
+    echo "tip: src/run_reproflake.py --list (OD)  |  src/run_reproflake_id.py --list (ID)" >&2
     exit 1
 fi
+TEST_TYPE="${ROW_INFO%%|*}"
+JAVA_VER="${ROW_INFO##*|}"
+
+# OD and ID share the same image. Pick the driver + mode flags by test_type.
+# For ID we must DISABLE the Illinois testorder Surefire extension: it lives in
+# /usr/share/maven/lib/ext and forces maven-surefire-plugin:3.0.0-M8-SNAPSHOT into
+# every build, which the ID container's offline .m2 doesn't have (ID is built with
+# NonDex, not testorder) -> build failure. An empty tmpfs over that dir hides the
+# extension so Maven uses the project's own surefire. OD keeps it (testorder needed).
+EXTRA_RUN_ARGS=()
+case "$TEST_TYPE" in
+    od) DRIVER="src/run_reproflake.py";    MODE_ARGS="--testorder" ;;
+    id) DRIVER="src/run_reproflake_id.py"; MODE_ARGS=""
+        EXTRA_RUN_ARGS+=(--tmpfs /usr/share/maven/lib/ext) ;;
+    *)  echo "unsupported test_type '$TEST_TYPE' for $CONTAINER (only od and id are wired)" >&2; exit 1 ;;
+esac
 
 case "$JAVA_VER" in
     11) IMAGE="flakydoctor-od11"; BASE="maven:3.8.6-openjdk-11" ;;
@@ -52,11 +68,11 @@ case "$JAVA_VER" in
         exit 1 ;;
 esac
 
-echo "[reproflake-od] container=$CONTAINER  java=$JAVA_VER  image=$IMAGE"
+echo "[reproflake] container=$CONTAINER  type=$TEST_TYPE  java=$JAVA_VER  image=$IMAGE  driver=$DRIVER"
 
 # Build the image once (idempotent: skip if it already exists).
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "[reproflake-od] building $IMAGE from $BASE (one-time; clones + builds the Illinois Surefire) ..."
+    echo "[reproflake] building $IMAGE from $BASE (one-time; clones + builds the Illinois Surefire) ..."
     docker build -t "$IMAGE" --build-arg "BASE=$BASE" \
         -f "$FLAKYDOCTOR_DIR/docker/Dockerfile.flakydoctor_od" "$FLAKYDOCTOR_DIR"
 fi
@@ -70,10 +86,11 @@ docker run --rm \
     -e ANTHROPIC_API_KEY="$(cat "$API_KEY_FILE")" \
     -v "$REPO_ROOT":/work \
     -w /work/FlakyDoctor \
+    ${EXTRA_RUN_ARGS[@]+"${EXTRA_RUN_ARGS[@]}"} \
     "$IMAGE" \
-    bash -lc 'mkdir -p /tmp/fdhome && python3 -u src/run_reproflake.py \
+    bash -lc 'mkdir -p /tmp/fdhome && python3 -u '"$DRIVER"' \
         --test-config "'"$(realpath --relative-to="$FLAKYDOCTOR_DIR" "$TEST_CONFIG")"'" \
         --container "'"$CONTAINER"'" \
-        --testorder \
+        '"$MODE_ARGS"' \
         --model Claude \
         --api-key "$ANTHROPIC_API_KEY" '"$*"
