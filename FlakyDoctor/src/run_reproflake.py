@@ -49,6 +49,11 @@ MVN_SKIP_FLAGS = (
     "-DskipDockerBuild -Ddependency-check.skip -Dspotless.check.skip"
 ).split()
 
+# hbase-common (and similar) GENERATE required sources (e.g. Version.java) with an
+# antrun task that -Dmaven.antrun.skip starves, breaking compilation. The build
+# fallback uses this antrun-enabled variant (skip dropped) so that codegen runs.
+MVN_SKIP_FLAGS_ANTRUN = [f for f in MVN_SKIP_FLAGS if f != "-Dmaven.antrun.skip"]
+
 
 def log(msg):
     print(f"[run_reproflake] {msg}", flush=True)
@@ -252,33 +257,76 @@ def maven_env(container_dir, jdk):
     return env
 
 
-def build_project(container_dir, project_dir, module, jdk):
-    # ReproFlake's staged .m2 repos were populated on machines that had the projects'
-    # (often http://) repositories configured. Maven 3.8+ blocks http:// repos and
-    # re-verifies artifacts cached from unknown remote IDs, failing with
-    # "present, but unavailable" even though the files are right there. Deleting the
-    # per-artifact origin-tracking files makes them count as locally installed.
+def clean_m2_markers(container_dir):
+    """Remove Maven resolution-failure markers from the staged offline .m2 so that
+    locally-present artifacts resolve from the local repo instead of being re-queried
+    against now-dead remote repos. ReproFlake's staged .m2 was populated on machines
+    with the projects' (often http://) repositories configured; Maven 3.8+ blocks
+    http:// and re-verifies artifacts cached from unknown remote IDs. We strip:
+      _remote.repositories - origin-tracking; deleting makes cached artifacts count
+                             as locally installed
+      *.lastUpdated        - cached "remote download failed" markers; while present
+                             Maven refuses to reattempt OR fall back to the local jar
+                             even though it is right there (breaks inter-module
+                             SNAPSHOTs, e.g. servicecomb's foundation-config:SNAPSHOT)
+    """
     staged_m2 = os.path.join(container_dir, "Flakym2", ".m2", "repository")
     if os.path.isdir(staged_m2):
         subprocess.run(["find", staged_m2, "-name", "_remote.repositories", "-delete"])
+        subprocess.run(["find", staged_m2, "-name", "*.lastUpdated", "-delete"])
 
+
+def strip_snapshot_versions(project_dir):
+    """Rewrite <version>X-SNAPSHOT</version> -> <version>X</version> in every pom.xml
+    under project_dir, so the project and its inter-module dependencies resolve against
+    the RELEASE artifacts cached in the staged .m2 (the matching -SNAPSHOT jars are
+    absent and no longer served by any remote). Dataset author's workaround for projects
+    like servicecomb, whose test module needs foundation-config:3.0.0-SNAPSHOT while only
+    the released 3.0.0 is cached. Opt-in via --strip-snapshot. Call AFTER ensure_git_baseline
+    and COMMIT the rewrite, so it survives FlakyDoctor's `git stash` during repair (the
+    staged source is itself a git repo, so an uncommitted rewrite gets stashed away before
+    the verify and the -SNAPSHOT poms come back)."""
+    res = subprocess.run(["find", project_dir, "-name", "pom.xml"],
+                         capture_output=True, text=True)
+    poms = [p for p in res.stdout.splitlines() if p]
+    for p in poms:
+        subprocess.run(["sed", "-i", "s|-SNAPSHOT</version>|</version>|g", p])
+    subprocess.run(["git", "-C", project_dir, "add", "-A"])
+    subprocess.run(["git", "-C", project_dir,
+                    "-c", "user.name=FlakyDoctor", "-c", "user.email=flakydoctor@local",
+                    "commit", "-qm", "strip -SNAPSHOT versions (resolve against cached releases)"])
+    log(f"stripped -SNAPSHOT from {len(poms)} pom.xml file(s) and committed (survives git stash)")
+
+
+def build_project(container_dir, project_dir, module, jdk):
+    clean_m2_markers(container_dir)
     marker = os.path.join(project_dir, ".reproflake_built")
     if os.path.exists(marker):
         built_jdk = open(marker).read().strip() or jdk
         log(f"already built with JDK {built_jdk} (marker exists) — skipping build")
         return built_jdk
-    # Most projects `install` cleanly. A few use packaging=bundle whose
-    # maven-bundle-plugin `bundle` goal (package phase) fails in this offline image
-    # ("Error(s) found in bundle configuration", e.g. avro). FlakyDoctor only needs
-    # the module + its tests COMPILED — the NonDex reproduce and every per-round
-    # verification run at the test phase, before package — so if `install` fails on
-    # both JDKs, retry with `test-compile`, which stops before the failing package/
-    # bundle step. The fallback only triggers when install already failed, so every
-    # project that installs normally is unaffected.
-    for goals in (["install"], ["test-compile"]):
+    # Most projects `install` cleanly. A couple of build patterns need a fallback,
+    # tried in order (first BUILD SUCCESS wins). FlakyDoctor only needs the module +
+    # its tests COMPILED — the NonDex reproduce and every per-round verification run
+    # at the test phase, before package — so test-compile suffices when install can't
+    # finish. Fallbacks only run when earlier strategies fail, so any project that
+    # installs normally is completely unaffected:
+    #   install                  - normal full build
+    #   test-compile             - packaging=bundle projects (e.g. avro) whose
+    #                              maven-bundle-plugin `bundle` goal fails at package
+    #   test-compile + antrun on - projects that GENERATE sources via antrun (e.g.
+    #                              hbase-common's Version.java), which the default
+    #                              -Dmaven.antrun.skip starves; drop the skip
+    strategies = [
+        ("install", MVN_SKIP_FLAGS),
+        ("test-compile", MVN_SKIP_FLAGS),
+        ("test-compile", MVN_SKIP_FLAGS_ANTRUN),
+    ]
+    for goal, flags in strategies:
+        label = goal + ("" if "-Dmaven.antrun.skip" in flags else "+antrun")
         for try_jdk in [jdk, "11" if jdk == "8" else "8"]:
-            log(f"building ({'+'.join(goals)}) with JDK {try_jdk} ...")
-            cmd = ["mvn"] + goals + ["-pl", module, "-am"] + MVN_SKIP_FLAGS
+            log(f"building ({label}) with JDK {try_jdk} ...")
+            cmd = ["mvn", goal, "-pl", module, "-am"] + flags
             try:
                 res = subprocess.run(cmd, cwd=project_dir, env=maven_env(container_dir, try_jdk),
                                      capture_output=True, text=True, timeout=3600)
@@ -286,12 +334,12 @@ def build_project(container_dir, project_dir, module, jdk):
                 log(f"build timed out after 1h on jdk {try_jdk}")
                 continue
             if "BUILD SUCCESS" in res.stdout:
-                log(f"BUILD SUCCESS ({'+'.join(goals)}, jdk {try_jdk})")
+                log(f"BUILD SUCCESS ({label}, jdk {try_jdk})")
                 open(marker, "w").write(try_jdk)
                 return try_jdk
-            log(f"BUILD FAILURE ({'+'.join(goals)}) on jdk {try_jdk}; last lines:\n"
+            log(f"BUILD FAILURE ({label}) on jdk {try_jdk}; last lines:\n"
                 + "\n".join(res.stdout.splitlines()[-10:]))
-    die("project did not build with JDK 8 or 11 (tried install and test-compile)")
+    die("project did not build with JDK 8 or 11 (tried install, test-compile, antrun-on)")
 
 
 # --------------------------------------------------------- reproduce / order
@@ -521,6 +569,7 @@ def run_flakydoctor(container_dir, row, github_url, project_name, projects_dir,
            "--output-result-json", os.path.join(out_dir, "results.json"),
            "--output-details-json", os.path.join(out_dir, "details.json")]
     log(f"running FlakyDoctor ({model}); live output follows, artifacts in {out_dir}/")
+    clean_m2_markers(container_dir)  # clear cached remote-failure markers before verify
     run_flakydoctor_cmd(cmd, env, out_dir)
     return out_dir
 

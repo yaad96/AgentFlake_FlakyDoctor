@@ -160,6 +160,7 @@ def run_flakydoctor_id(container_dir, row, github_url, project_name, projects_di
            "--output-result-json", os.path.join(out_dir, "results.json"),
            "--output-details-json", os.path.join(out_dir, "details.json")]
     rf.log(f"running FlakyDoctor ({model}, ID); live output follows, artifacts in {out_dir}/")
+    rf.clean_m2_markers(container_dir)  # clear cached remote-failure markers before verify
     rf.run_flakydoctor_cmd(cmd, env, out_dir)
     return out_dir
 
@@ -210,6 +211,11 @@ def main():
     ap.add_argument("--fresh", action="store_true",
                     help="remove any existing staged container and re-download + rebuild "
                          "from pristine source (use when re-running an already-repaired container)")
+    ap.add_argument("--strip-snapshot", action="store_true",
+                    help="rewrite <version>X-SNAPSHOT</version> -> X in every pom.xml after "
+                         "staging, so inter-module deps resolve against the RELEASE artifacts "
+                         "cached in the staged .m2 (workaround for projects like servicecomb "
+                         "whose -SNAPSHOT siblings are absent and no longer served remotely)")
     args = ap.parse_args()
 
     if not os.path.exists("src/flakydoctor.py"):
@@ -239,6 +245,9 @@ def main():
     container_dir, project_dir, project_name, github_url = \
         rf.stage_container(row, args.projects, keep_zip=args.keep_zip, fresh=args.fresh)
     rf.ensure_git_baseline(project_dir)
+    if args.strip_snapshot:
+        # after the baseline so the rewrite is committed (survives FlakyDoctor's git stash)
+        rf.strip_snapshot_versions(project_dir)
     jdk = rf.build_project(container_dir, project_dir, row["module"], row["java"])
     reproduce_with_nondex_seed(container_dir, project_dir, row["module"],
                                row["test"], row["seed"], runs, jdk)
