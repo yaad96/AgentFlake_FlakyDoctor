@@ -40,9 +40,12 @@ import urllib.request
 import zipfile
 
 MVN_SKIP_FLAGS = (
+    # -Dskip.web.build=true skips graylog2-server's node/yarn web-UI build (its
+    # web-interface-build profile is active unless this property is set); harmless
+    # (unused) for every other project.
     "-DskipTests -Dfindbugs.skip=true -Dgpg.skip -Drat.skip -Dcheckstyle.skip "
     "-Denforcer.skip=true -Dspotbugs.skip -Djacoco.skip -Danimal.sniffer.skip "
-    "-Dmaven.antrun.skip -Dlicense.skip -Dmaven.javadoc.skip=true "
+    "-Dmaven.antrun.skip -Dlicense.skip -Dmaven.javadoc.skip=true -Dskip.web.build=true "
     "-DskipDockerBuild -Ddependency-check.skip -Dspotless.check.skip"
 ).split()
 
@@ -96,13 +99,21 @@ def row_runnable(row):
 
 # ------------------------------------------------------------------- staging
 
-def stage_container(row, projects_dir, keep_zip=False):
+def stage_container(row, projects_dir, keep_zip=False, fresh=False):
     """Download + unzip the Zenodo snapshot into projects/<zipbase>/.
+
+    fresh=True removes any existing staged container first, forcing a clean
+    re-download + rebuild from pristine source (so a re-run of an already-repaired
+    container doesn't reuse last run's patched source / cached build).
 
     Returns (container_dir, project_dir, project_name, github_url)."""
     zip_base = os.path.basename(row["url"])
     zip_base = zip_base[:-4] if zip_base.endswith(".zip") else zip_base
     container_dir = os.path.join(projects_dir, zip_base)
+
+    if fresh and os.path.isdir(container_dir):
+        log(f"--fresh: removing existing staged container {container_dir}")
+        shutil.rmtree(container_dir, ignore_errors=True)
 
     project_dir, project_name, github_url = _find_staged_project(container_dir)
     if project_dir:
@@ -234,6 +245,10 @@ def maven_env(container_dir, jdk):
         # so it overrides the image's default /root/.m2 repo.local.
         env["MAVEN_ARGS"] = f"-Dmaven.repo.local={staged_m2}"
         env["MAVEN_OPTS"] = f"-Dmaven.repo.local={staged_m2}"
+    # -Dskip.web.build=true via MAVEN_OPTS so it also reaches FlakyDoctor's stock
+    # run_nondex.sh (it inherits this env) — deactivates graylog's yarn web build
+    # at the verification step too, without modifying FlakyDoctor.
+    env["MAVEN_OPTS"] = (env.get("MAVEN_OPTS", "") + " -Dskip.web.build=true").strip()
     return env
 
 
@@ -252,22 +267,31 @@ def build_project(container_dir, project_dir, module, jdk):
         built_jdk = open(marker).read().strip() or jdk
         log(f"already built with JDK {built_jdk} (marker exists) — skipping build")
         return built_jdk
-    for try_jdk in [jdk, "11" if jdk == "8" else "8"]:
-        log(f"building with JDK {try_jdk} ...")
-        cmd = ["mvn", "install", "-pl", module, "-am"] + MVN_SKIP_FLAGS
-        try:
-            res = subprocess.run(cmd, cwd=project_dir, env=maven_env(container_dir, try_jdk),
-                                 capture_output=True, text=True, timeout=3600)
-        except subprocess.TimeoutExpired:
-            log(f"build timed out after 1h on jdk {try_jdk}")
-            continue
-        if "BUILD SUCCESS" in res.stdout:
-            log(f"BUILD SUCCESS (jdk {try_jdk})")
-            open(marker, "w").write(try_jdk)
-            return try_jdk
-        log(f"BUILD FAILURE on jdk {try_jdk}; last lines:\n"
-            + "\n".join(res.stdout.splitlines()[-10:]))
-    die("project did not build with JDK 8 or 11")
+    # Most projects `install` cleanly. A few use packaging=bundle whose
+    # maven-bundle-plugin `bundle` goal (package phase) fails in this offline image
+    # ("Error(s) found in bundle configuration", e.g. avro). FlakyDoctor only needs
+    # the module + its tests COMPILED — the NonDex reproduce and every per-round
+    # verification run at the test phase, before package — so if `install` fails on
+    # both JDKs, retry with `test-compile`, which stops before the failing package/
+    # bundle step. The fallback only triggers when install already failed, so every
+    # project that installs normally is unaffected.
+    for goals in (["install"], ["test-compile"]):
+        for try_jdk in [jdk, "11" if jdk == "8" else "8"]:
+            log(f"building ({'+'.join(goals)}) with JDK {try_jdk} ...")
+            cmd = ["mvn"] + goals + ["-pl", module, "-am"] + MVN_SKIP_FLAGS
+            try:
+                res = subprocess.run(cmd, cwd=project_dir, env=maven_env(container_dir, try_jdk),
+                                     capture_output=True, text=True, timeout=3600)
+            except subprocess.TimeoutExpired:
+                log(f"build timed out after 1h on jdk {try_jdk}")
+                continue
+            if "BUILD SUCCESS" in res.stdout:
+                log(f"BUILD SUCCESS ({'+'.join(goals)}, jdk {try_jdk})")
+                open(marker, "w").write(try_jdk)
+                return try_jdk
+            log(f"BUILD FAILURE ({'+'.join(goals)}) on jdk {try_jdk}; last lines:\n"
+                + "\n".join(res.stdout.splitlines()[-10:]))
+    die("project did not build with JDK 8 or 11 (tried install and test-compile)")
 
 
 # --------------------------------------------------------- reproduce / order
@@ -397,6 +421,78 @@ def reproduce_with_testorder(container_dir, project_dir, module, row, jdk):
 
 # ------------------------------------------------------------------- repair
 
+# claude-sonnet-4-6 list price, USD per 1M tokens (FlakyDoctor's model).
+CLAUDE_PRICE_IN, CLAUDE_PRICE_OUT = 3.0, 15.0
+
+
+def run_flakydoctor_cmd(cmd, env, out_dir):
+    """Run flakydoctor.py streaming its output live AND capturing it, then write
+    per-run metrics to <out_dir>/logs.log. FlakyDoctor prints the Anthropic
+    Usage(...) for each round but never persists it; we parse the captured stdout
+    so FlakyDoctor itself stays unmodified."""
+    t0 = time.time()
+    captured = []
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True,
+                            errors="replace", bufsize=1)
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        captured.append(line)
+    proc.wait()
+    _write_run_metrics("".join(captured), time.time() - t0, out_dir)
+
+
+FIXED_TOOL_FAIL = "Failed due to tool failure"
+
+
+def _run_fixed(out_dir):
+    """Classify a run from FlakyDoctor's results.json:
+      'YES' - some round reached test_pass (flake repaired)
+      'NO'  - the repair loop ran but never passed (genuine miss)
+      'Failed due to tool failure' - FlakyDoctor hit an internal error (non-empty
+            Exceptions, e.g. method_code_location_failure) so it produced no
+            usable result, or results.json is missing/empty.
+    """
+    rj = os.path.join(out_dir, "results.json")
+    try:
+        raw = open(rj).read().strip()
+        if not raw:
+            return FIXED_TOOL_FAIL
+        dec, idx, tool_failed = json.JSONDecoder(), 0, False
+        while idx < len(raw):
+            obj, end = dec.raw_decode(raw, idx)
+            idx = end
+            while idx < len(raw) and raw[idx] in " \n\t,":
+                idx += 1
+            if any(v == "test_pass" for v in (obj.get("test_results") or {}).values()):
+                return "YES"
+            if obj.get("Exceptions"):
+                tool_failed = True
+        return FIXED_TOOL_FAIL if tool_failed else "NO"
+    except Exception:
+        return FIXED_TOOL_FAIL
+
+
+def _write_run_metrics(output, elapsed, out_dir):
+    # Each Claude round prints one Usage(...). In the Anthropic Usage repr,
+    # input_tokens is rendered immediately before output_tokens, so match the
+    # PAIR together: this ignores cache_*_input_tokens / output_tokens_details
+    # and any stray "output_tokens=" that could appear inside a response body.
+    pairs = re.findall(r"(?<![_A-Za-z])input_tokens=(\d+), output_tokens=(\d+)", output)
+    in_toks = sum(int(a) for a, _ in pairs)
+    out_toks = sum(int(b) for _, b in pairs)
+    turns = len(pairs)
+    cost = in_toks / 1e6 * CLAUDE_PRICE_IN + out_toks / 1e6 * CLAUDE_PRICE_OUT
+    fixed = _run_fixed(out_dir)
+    path = os.path.join(out_dir, "logs.log")
+    with open(path, "w") as f:
+        f.write("input_tokens,output_tokens,total_tokens,time_s,cost_usd,turns_used,fixed\n")
+        f.write(f"{in_toks},{out_toks},{in_toks + out_toks},{elapsed:.2f},{cost:.6f},{turns},{fixed}\n")
+    log(f"metrics -> {path}  (in={in_toks} out={out_toks} total={in_toks + out_toks} "
+        f"time={elapsed:.1f}s cost=${cost:.4f} turns={turns} fixed={fixed})")
+
+
 def run_flakydoctor(container_dir, row, github_url, project_name, projects_dir,
                     api_key, model, run_order, jdk):
     zip_base = os.path.basename(container_dir)
@@ -425,7 +521,7 @@ def run_flakydoctor(container_dir, row, github_url, project_name, projects_dir,
            "--output-result-json", os.path.join(out_dir, "results.json"),
            "--output-details-json", os.path.join(out_dir, "details.json")]
     log(f"running FlakyDoctor ({model}); live output follows, artifacts in {out_dir}/")
-    subprocess.run(cmd, env=env, check=False)
+    run_flakydoctor_cmd(cmd, env, out_dir)
     return out_dir
 
 
@@ -476,6 +572,9 @@ def main():
                          "image / extension) to force exact polluter->victim order; makes "
                          "same-class pairs deterministic. See docker/run_in_container.sh.")
     ap.add_argument("--keep-zip", action="store_true", help="keep the downloaded zip in /tmp")
+    ap.add_argument("--fresh", action="store_true",
+                    help="remove any existing staged container and re-download + rebuild "
+                         "from pristine source (use when re-running an already-repaired container)")
     args = ap.parse_args()
 
     if not os.path.exists("src/flakydoctor.py"):
@@ -509,7 +608,7 @@ def main():
         die("--api-key is required (or pass --skip-repair to stop after reproduction)")
 
     container_dir, project_dir, project_name, github_url = \
-        stage_container(row, args.projects, keep_zip=args.keep_zip)
+        stage_container(row, args.projects, keep_zip=args.keep_zip, fresh=args.fresh)
     ensure_git_baseline(project_dir)
     jdk = build_project(container_dir, project_dir, row["module"], row["java"])
     if args.testorder:

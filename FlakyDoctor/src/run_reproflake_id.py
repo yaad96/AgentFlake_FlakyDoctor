@@ -49,7 +49,7 @@ NONDEX_FLAGS = (
     "-Dlicense.skipCheckLicense -Dlicense.skipAddThirdParty=true -Dlicense.skip -Dskip.yarn "
     "-Dskip.bower -Dskip.grunt -Dskip.gulp -Dskip.jspm -Dskip.karma -Dskip.webpack "
     "-DskipDockerBuild -DskipDockerTag -DskipDockerPush -DskipDocker -Dstyle.color=never "
-    "-Ddependency-check.skip -Dspotless.check.skip"
+    "-Ddependency-check.skip -Dspotless.check.skip -Dskip.web.build=true"
 ).split()
 
 
@@ -160,7 +160,7 @@ def run_flakydoctor_id(container_dir, row, github_url, project_name, projects_di
            "--output-result-json", os.path.join(out_dir, "results.json"),
            "--output-details-json", os.path.join(out_dir, "details.json")]
     rf.log(f"running FlakyDoctor ({model}, ID); live output follows, artifacts in {out_dir}/")
-    subprocess.run(cmd, env=env, check=False)
+    rf.run_flakydoctor_cmd(cmd, env, out_dir)
     return out_dir
 
 
@@ -207,6 +207,9 @@ def main():
     ap.add_argument("--nondex-times", help="override NonDex runs (default: CSV iterations, capped at 10)")
     ap.add_argument("--skip-repair", action="store_true", help="stop after reproducing (zero API cost)")
     ap.add_argument("--keep-zip", action="store_true", help="keep the downloaded zip in /tmp")
+    ap.add_argument("--fresh", action="store_true",
+                    help="remove any existing staged container and re-download + rebuild "
+                         "from pristine source (use when re-running an already-repaired container)")
     args = ap.parse_args()
 
     if not os.path.exists("src/flakydoctor.py"):
@@ -234,7 +237,7 @@ def main():
 
     runs = args.nondex_times or nondex_runs(row["iterations"])
     container_dir, project_dir, project_name, github_url = \
-        rf.stage_container(row, args.projects, keep_zip=args.keep_zip)
+        rf.stage_container(row, args.projects, keep_zip=args.keep_zip, fresh=args.fresh)
     rf.ensure_git_baseline(project_dir)
     jdk = rf.build_project(container_dir, project_dir, row["module"], row["java"])
     reproduce_with_nondex_seed(container_dir, project_dir, row["module"],

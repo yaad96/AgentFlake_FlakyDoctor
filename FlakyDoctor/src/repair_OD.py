@@ -608,6 +608,7 @@ def generate_prompts(model, victim_name, polluter_name, test_type, \
             )
             response = full_response["choices"][0]["message"]["content"]
 
+        print("{} response:\n{}".format(model, full_response))
         return response,gpt_prompt
 
     elif model == "MagicCoder":

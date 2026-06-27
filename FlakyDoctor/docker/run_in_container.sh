@@ -37,14 +37,13 @@ API_KEY_FILE="${API_KEY_FILE:-$HOME/.anthropic_api_key}"
 command -v docker >/dev/null 2>&1 || { echo "docker not installed — see docker/README_reproflake_od.md" >&2; exit 1; }
 
 # Read the row's test_type (col 1) and Java version (col 9) for the container (col 2).
-ROW_INFO="$(awk -F, -v c="$CONTAINER" '$2==c {print tolower($1)"|"$9; exit}' "$TEST_CONFIG")"
+ROW_INFO="$(awk -F, -v c="$CONTAINER" '$2==c {print tolower($1)"\t"$9; exit}' "$TEST_CONFIG")"
 if [[ -z "$ROW_INFO" ]]; then
     echo "no row with result_container == $CONTAINER in $TEST_CONFIG" >&2
     echo "tip: src/run_reproflake.py --list (OD)  |  src/run_reproflake_id.py --list (ID)" >&2
     exit 1
 fi
-TEST_TYPE="${ROW_INFO%%|*}"
-JAVA_VER="${ROW_INFO##*|}"
+IFS=$'\t' read -r TEST_TYPE JAVA_VER <<< "$ROW_INFO"
 
 # OD and ID share the same image. Pick the driver + mode flags by test_type.
 # For ID we must DISABLE the Illinois testorder Surefire extension: it lives in
@@ -53,18 +52,16 @@ JAVA_VER="${ROW_INFO##*|}"
 # NonDex, not testorder) -> build failure. An empty tmpfs over that dir hides the
 # extension so Maven uses the project's own surefire. OD keeps it (testorder needed).
 EXTRA_RUN_ARGS=()
+WITH_TESTORDER="true"   # OD needs the Illinois testorder Surefire; ID never does
 case "$TEST_TYPE" in
     od) DRIVER="src/run_reproflake.py";    MODE_ARGS="--testorder" ;;
-    id) DRIVER="src/run_reproflake_id.py"; MODE_ARGS=""
+    id) DRIVER="src/run_reproflake_id.py"; MODE_ARGS=""; WITH_TESTORDER="false"
         EXTRA_RUN_ARGS+=(--tmpfs /usr/share/maven/lib/ext) ;;
     *)  echo "unsupported test_type '$TEST_TYPE' for $CONTAINER (only od and id are wired)" >&2; exit 1 ;;
 esac
 
-# JDK 8/11 use the openjdk base + the testorder Surefire. JDK 17 has no
-# maven:3.8.6-openjdk-17 tag and the old Surefire fork doesn't compile on 17, so
-# it uses the temurin-17 base built WITHOUT testorder (WITH_TESTORDER=false) —
-# fine for ID (NonDex), but OD on 17 would have no testorder (none in scope here).
-WITH_TESTORDER="true"
+# Base image per JDK. JDK 17 has no maven:3.8.6-openjdk-17 tag and the old
+# Surefire fork doesn't compile on 17, so it uses temurin-17 with no testorder.
 case "$JAVA_VER" in
     17) IMAGE="flakydoctor-od17"; BASE="maven:3.8.6-eclipse-temurin-17"; WITH_TESTORDER="false" ;;
     11) IMAGE="flakydoctor-od11"; BASE="maven:3.8.6-openjdk-11" ;;
@@ -75,6 +72,12 @@ esac
 if [[ "$TEST_TYPE" == "od" && "$WITH_TESTORDER" == "false" ]]; then
     echo "OD on Java $JAVA_VER needs the testorder Surefire, which isn't built for this JDK." >&2
     exit 1
+fi
+
+# ID on JDK 8/11 uses a no-testorder image (~3 min build vs ~20; ID never uses
+# testorder). The od17 image is already no-testorder.
+if [[ "$WITH_TESTORDER" == "false" && "$JAVA_VER" != "17" ]]; then
+    IMAGE="${IMAGE}-noto"
 fi
 
 echo "[reproflake] container=$CONTAINER  type=$TEST_TYPE  java=$JAVA_VER  image=$IMAGE  driver=$DRIVER"
