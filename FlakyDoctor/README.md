@@ -13,18 +13,10 @@ repairs it with the original FlakyDoctor pipeline.
 - Works on **Linux and macOS**. The host only needs `bash`, `python3`, and
   `docker`; the JDK/Maven toolchain lives in the image.
 
-## One-command setup
+## setup
 
-From the repo root:
+From the repo root, create a file ".anthropic_api_key" and store your api key there. During the run, the key needed will be accessed from there. It is git-ignored, so its safe. 
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-... bash FlakyDoctor/setup.sh --build-images
-```
-
-This stores the key in `FlakyDoctor/.anthropic_api_key` (git-ignored), checks
-Docker, and prebuilds the OD/ID images. Omit `--build-images` to build each image
-on first use. The `ANTHROPIC_API_KEY` environment variable always overrides the
-key file.
 
 ## Run a container (ID or OD)
 
@@ -46,10 +38,12 @@ python3 src/run_af_fd_id.py --list     # ID rows
 ### Examples
 
 ```bash
+cd FlakyDoctor
 # OD
 python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
 
 # ID
+cd FlakyDoctor
 python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
 
 
