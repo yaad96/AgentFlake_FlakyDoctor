@@ -1,6 +1,7 @@
 # FlakyDoctor runtime artifacts — cloned subject projects and per-run outputs
 FlakyDoctor/projects/
 FlakyDoctor/outputs/
+FlakyDoctor/data/
 FlakyDoctor/install_*.csv
 
 # Untracked Anthropic API key — holds the secret key, never commit

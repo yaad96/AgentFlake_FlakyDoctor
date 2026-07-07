@@ -37,7 +37,7 @@ SKIP_REPAIR="false"
 for _a in "$@"; do [[ "$_a" == "--skip-repair" ]] && SKIP_REPAIR="true"; done
 
 # Resolve the Anthropic key: ANTHROPIC_API_KEY env wins, else the key file.
-# Required only for an actual repair run (matches run_agentic.py's behavior).
+# Required only for an actual repair run (matches runner/run_claude.py's behavior).
 API_KEY="${ANTHROPIC_API_KEY:-}"
 if [[ -z "$API_KEY" && -f "$API_KEY_FILE" ]]; then
     API_KEY="$(cat "$API_KEY_FILE")"
@@ -115,7 +115,6 @@ docker run --rm \
     -e HOME=/tmp/fdhome \
     -e ANTHROPIC_API_KEY="$API_KEY" \
     -e FD_CLAUDE_MODEL="${FD_CLAUDE_MODEL:-}" \
-    -e FD_MAX_ROUNDS="${FD_MAX_ROUNDS:-}" \
     -v "$FLAKYDOCTOR_DIR":/work \
     -w /work \
     ${EXTRA_RUN_ARGS[@]+"${EXTRA_RUN_ARGS[@]}"} \

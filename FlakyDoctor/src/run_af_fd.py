@@ -121,8 +121,13 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
 
     project_dir, project_name, github_url = _find_staged_project(container_dir)
     if project_dir:
-        log(f"already staged: {project_dir} (skipping download)")
-        return container_dir, project_dir, project_name, github_url
+        if os.path.isdir(os.path.join(container_dir, "Flakym2")):
+            log(f"already staged: {project_dir} (skipping download)")
+            return container_dir, project_dir, project_name, github_url
+        # Project staged but its offline .m2 (Flakym2) was removed by a previous
+        # run's cleanup — re-stage from scratch so the build has its dependencies.
+        log(f"staged project found but Flakym2 (offline .m2) missing — re-staging {container_dir}")
+        shutil.rmtree(container_dir, ignore_errors=True)
 
     zip_path = os.path.join("/tmp", f"af_fd_{zip_base}.zip")
     if not os.path.exists(zip_path):
@@ -192,6 +197,19 @@ def _find_staged_project(container_dir):
                 and os.path.exists(os.path.join(full, "pom.xml")):
             return full, d, github_url
     return None, None, None
+
+
+def remove_flaky_m2(container_dir):
+    """Reclaim disk after a completed run by deleting the container's bundled
+    offline maven repo (projects/<container>/Flakym2). Skipped when
+    KEEP_FLAKY_M2=1 (e.g. between pass@k runs). A later re-run re-stages it
+    automatically from the Zenodo zip."""
+    if os.environ.get("KEEP_FLAKY_M2") == "1":
+        return
+    m2_dir = os.path.join(container_dir, "Flakym2")
+    if os.path.isdir(m2_dir):
+        shutil.rmtree(m2_dir, ignore_errors=True)
+        log(f"cleanup: removed offline maven repo {m2_dir} (KEEP_FLAKY_M2=1 to keep)")
 
 
 def ensure_git_baseline(project_dir):
@@ -297,6 +315,24 @@ def strip_snapshot_versions(project_dir):
     log(f"stripped -SNAPSHOT from {len(poms)} pom.xml file(s) and committed (survives git stash)")
 
 
+def _maven_error_lines(output):
+    """Surface the informative Maven failure lines (the 'Failed to execute goal'
+    reason, compilation errors, unresolved dependencies) instead of Maven's
+    generic '[Help 1]' footer."""
+    keys = ("Failed to execute goal", "COMPILATION ERROR", "cannot find symbol",
+            "does not exist", "Could not resolve dependencies", "Could not find artifact",
+            "Non-resolvable", "Caused by:", "BUILD FAILURE")
+    hits, seen = [], set()
+    for ln in output.splitlines():
+        s = ln.strip()
+        if s and s not in seen and any(k in ln for k in keys):
+            seen.add(s)
+            hits.append(s)
+    if hits:
+        return "\n".join(hits[:12])
+    return "\n".join(output.splitlines()[-12:])
+
+
 def build_project(container_dir, project_dir, module, jdk):
     clean_m2_markers(container_dir)
     marker = os.path.join(project_dir, ".af_fd_built")
@@ -321,6 +357,7 @@ def build_project(container_dir, project_dir, module, jdk):
         ("test-compile", MVN_SKIP_FLAGS),
         ("test-compile", MVN_SKIP_FLAGS_ANTRUN),
     ]
+    last_out = ""
     for goal, flags in strategies:
         label = goal + ("" if "-Dmaven.antrun.skip" in flags else "+antrun")
         for try_jdk in [jdk, "11" if jdk == "8" else "8"]:
@@ -336,9 +373,19 @@ def build_project(container_dir, project_dir, module, jdk):
                 log(f"BUILD SUCCESS ({label}, jdk {try_jdk})")
                 open(marker, "w").write(try_jdk)
                 return try_jdk
-            log(f"BUILD FAILURE ({label}) on jdk {try_jdk}; last lines:\n"
-                + "\n".join(res.stdout.splitlines()[-10:]))
-    die("project did not build with JDK 8 or 11 (tried install, test-compile, antrun-on)")
+            last_out = res.stdout + (("\n" + res.stderr) if res.stderr else "")
+            log(f"BUILD FAILURE ({label}) on jdk {try_jdk}:\n" + _maven_error_lines(last_out))
+    # The per-strategy summary above shows only the key error lines; save the full
+    # log of the last attempt so the real cause is inspectable on the host.
+    fail_log = os.path.join(container_dir, "build_failure.log")
+    try:
+        with open(fail_log, "w") as fh:
+            fh.write(last_out)
+        log(f"full build log of the last attempt saved to {fail_log}")
+    except OSError:
+        fail_log = "(could not write build_failure.log)"
+    die("project did not build with JDK 8 or 11 (tried install, test-compile, antrun-on); "
+        f"see {fail_log} for the full error")
 
 
 # --------------------------------------------------------- reproduce / order
@@ -600,6 +647,22 @@ def summarize(out_dir, container_dir):
         log(f"developer's reference fix for comparison: {dev_fix}")
 
 
+def generate_semantic_diff(out_dir):
+    """Write out_dir/semantic_diff.diff (every LLM round, passing + failing) via
+    runner/patch_to_diff.py. Best-effort: skipped when the run wrote no details.json
+    (e.g. FlakyDoctor errored early), and a failure here never fails the run."""
+    if not os.path.exists(os.path.join(out_dir, "details.json")):
+        return  # nothing to diff
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "runner", "patch_to_diff.py")
+    if not os.path.exists(script):
+        return
+    try:
+        subprocess.run([sys.executable, script, out_dir], check=False)
+    except Exception as e:
+        log(f"semantic_diff.diff generation skipped: {e}")
+
+
 # --------------------------------------------------------------------- main
 
 def main():
@@ -672,6 +735,8 @@ def main():
     out_dir = run_flakydoctor(container_dir, row, github_url, project_name,
                               args.projects, args.api_key, args.model, run_order, jdk)
     summarize(out_dir, container_dir)
+    generate_semantic_diff(out_dir)
+    remove_flaky_m2(container_dir)
 
 
 if __name__ == "__main__":

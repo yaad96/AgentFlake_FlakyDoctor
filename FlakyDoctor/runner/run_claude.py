@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
-run_agentic.py — AF_Claude_Agent-style entry point for FlakyDoctor's Claude repair.
+run_claude.py — CLI runner for FlakyDoctor's Claude repair.
 
-Presents the same command surface as AF_Claude_Agent:
+Presents a simple batch/pass@k command surface:
 
-    python3 agentic/run_agentic.py <container> --runs 1 --models claude --max-iterations 10
+    python3 runner/run_claude.py <container> --runs 1 --models claude
 
-but drives FlakyDoctor's existing container pipeline
+It drives FlakyDoctor's existing container pipeline
 (docker/run_in_container.sh -> run_af_fd.py / run_af_fd_id.py -> flakydoctor.py).
 
-NOTE: FlakyDoctor uses the Anthropic API (not the Claude Code CLI), so the *engine*
-differs from AF_Claude_Agent; only the commands are matched. FlakyDoctor repairs
-ID and OD only — NIO/TD containers are not supported.
+NOTE: this is a plain CLI runner, not an agent — FlakyDoctor calls the Anthropic
+API directly inside its neuro-symbolic repair loop. FlakyDoctor repairs ID and OD
+only — NIO/TD containers are not supported.
 
 - Reads FlakyDoctor/test_config.csv, dispatches by test type.
 - Runs the repair once per --runs, archiving each to
   FlakyDoctor/data/<container>/run_<NN>/ with meta.json + a verdict.
-- Model aliases (agentic_config.CLAUDE_MODELS) reach the repair loop via FD_CLAUDE_MODEL;
-  --max-iterations via FD_MAX_ROUNDS (defaults preserve FlakyDoctor's native behavior).
+- Model aliases (config.CLAUDE_MODELS) reach the repair loop via FD_CLAUDE_MODEL.
 - Key: ANTHROPIC_API_KEY env wins, else FlakyDoctor/.anthropic_api_key.
   Use --reproduce-only for a free, no-key reproduction (no repair).
 """
@@ -44,17 +43,17 @@ DATA_DIR = FLAKYDOCTOR_DIR / "data"
 KEY_FILE = FLAKYDOCTOR_DIR / ".anthropic_api_key"
 
 sys.path.insert(0, str(SCRIPT_DIR))
-import agentic_config  # noqa: E402
+import config  # noqa: E402
 
 SUPPORTED_TYPES = {"od", "id"}
 
 
 def log(msg: str) -> None:
-    print(f"[run_agentic] {msg}", flush=True)
+    print(f"[run_claude] {msg}", flush=True)
 
 
 def die(msg: str, code: int = 1):
-    print(f"[run_agentic] ERROR: {msg}", file=sys.stderr, flush=True)
+    print(f"[run_claude] ERROR: {msg}", file=sys.stderr, flush=True)
     sys.exit(code)
 
 
@@ -62,12 +61,12 @@ def die(msg: str, code: int = 1):
 
 def resolve_model(alias: str) -> str:
     key = alias.strip().lower()
-    if key in agentic_config.CLAUDE_MODELS:
-        return agentic_config.CLAUDE_MODELS[key]
+    if key in config.CLAUDE_MODELS:
+        return config.CLAUDE_MODELS[key]
     if key.startswith("claude"):
         return alias  # a full claude model id, passed through unchanged
     die(f"unsupported model '{alias}'. This runner is Claude-only; aliases: "
-        f"{', '.join(sorted(agentic_config.CLAUDE_MODELS))}. "
+        f"{', '.join(sorted(config.CLAUDE_MODELS))}. "
         f"(FlakyDoctor also supports GPT-4, but only via src/flakydoctor.py --model GPT-4.)")
     return ""  # unreachable
 
@@ -134,15 +133,16 @@ def verdict_from_results(fd_out_dir: Path) -> str:
 
 
 def run_once(container: str, test_type: str, model_alias: str, model_id: str,
-             max_iter: int, reproduce_only: bool, key: str) -> dict:
+             reproduce_only: bool, key: str, keep_m2: bool = False) -> dict:
     run_dir, run_idx = next_run_dir(container)
     log(f"container={container} type={test_type} model={model_alias}({model_id}) "
-        f"run={run_idx} max_iterations={max_iter}{' [reproduce-only]' if reproduce_only else ''} -> {run_dir}")
+        f"run={run_idx}{' [reproduce-only]' if reproduce_only else ''} -> {run_dir}")
 
     env = dict(os.environ)
     env["FD_CLAUDE_MODEL"] = model_id
-    env["FD_MAX_ROUNDS"] = str(max_iter)
     env["ANTHROPIC_API_KEY"] = key
+    if keep_m2:
+        env["KEEP_FLAKY_M2"] = "1"  # keep the offline .m2 until the final run of a batch
 
     cmd = ["bash", str(RUN_IN_CONTAINER), container]
     if reproduce_only:
@@ -186,7 +186,6 @@ def run_once(container: str, test_type: str, model_alias: str, model_id: str,
         "model_alias": model_alias,
         "model_id": model_id,
         "run_index": run_idx,
-        "max_iterations": max_iter,
         "reproduce_only": reproduce_only,
         "verdict": verdict,
         "return_code": rc,
@@ -201,7 +200,7 @@ def run_once(container: str, test_type: str, model_alias: str, model_id: str,
 
 
 SUMMARY_FIELDS = ["container", "test_type", "model_alias", "model_id", "run_index",
-                  "max_iterations", "reproduce_only", "verdict", "return_code",
+                  "reproduce_only", "verdict", "return_code",
                   "elapsed_s", "timestamp_utc"]
 
 
@@ -221,14 +220,12 @@ def append_summary(container: str, metas: list[dict]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="AF_Claude_Agent-style runner for FlakyDoctor's Claude repair (ID/OD only).")
+        description="CLI runner for FlakyDoctor's Claude repair (ID/OD only).")
     ap.add_argument("container", help="result_container name from test_config.csv")
     ap.add_argument("--models", default="claude",
                     help="comma-separated Claude model aliases/ids (default: claude)")
     ap.add_argument("--runs", type=int, default=1,
                     help="independent runs per model for pass@k (default 1)")
-    ap.add_argument("--max-iterations", type=int, default=agentic_config.MAX_ITERATIONS,
-                    help=f"repair-round cap per run (default {agentic_config.MAX_ITERATIONS})")
     ap.add_argument("--reproduce-only", action="store_true",
                     help="reproduce the flake and stop (no repair, no API cost, no key needed)")
     args = ap.parse_args()
@@ -251,10 +248,13 @@ def main() -> None:
         die("no models given")
 
     metas: list[dict] = []
+    total = len(resolved) * args.runs
+    done = 0
     for alias, model_id in resolved:
         for _ in range(args.runs):
+            done += 1
             metas.append(run_once(args.container, test_type, alias, model_id,
-                                  args.max_iterations, args.reproduce_only, key))
+                                  args.reproduce_only, key, keep_m2=done < total))
     append_summary(args.container, metas)
 
     log("=" * 60)

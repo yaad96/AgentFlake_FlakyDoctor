@@ -258,6 +258,8 @@ def main():
     out_dir = run_flakydoctor_id(container_dir, row, github_url, project_name,
                                  args.projects, args.api_key, args.model, runs, jdk)
     summarize_id(out_dir, container_dir)
+    rf.generate_semantic_diff(out_dir)
+    rf.remove_flaky_m2(container_dir)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command setup for FlakyDoctor's Claude (agentic-style) runner.
+# One-command setup for FlakyDoctor's Claude runner.
 # Mirrors AF_Claude_Agent's setup.sh ergonomics. Linux-first (macOS also works).
 #
 # Usage (from anywhere):
@@ -76,4 +76,4 @@ if [[ "$BUILD_IMAGES" == "1" ]]; then
 fi
 
 echo "[setup] done. Example run:"
-echo "  $VENV/bin/python $FD_DIR/agentic/run_agentic.py <container> --runs 1 --models claude --max-iterations 10"
+echo "  $VENV/bin/python $FD_DIR/runner/run_claude.py <container> --runs 1 --models claude"
