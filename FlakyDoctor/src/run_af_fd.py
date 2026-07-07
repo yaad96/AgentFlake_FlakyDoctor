@@ -215,7 +215,7 @@ def remove_flaky_m2(container_dir):
 def ensure_git_baseline(project_dir):
     # CRITICAL: only skip if project_dir is the ROOT of its OWN git repo. A bare
     # `rev-parse --git-dir` succeeds even when project_dir merely sits *inside* an
-    # outer repo — and these staged projects live under the bind-mounted FlakyRV
+    # outer repo — and these staged projects live under the bind-mounted AgentFlake
     # checkout. Without a project-local .git, FlakyDoctor's git_stash/git_checkout
     # would run against the OUTER repo and silently wipe its uncommitted changes.
     top = subprocess.run(["git", "-C", project_dir, "rev-parse", "--show-toplevel"],
