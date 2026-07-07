@@ -31,8 +31,27 @@ FLAKYDOCTOR_DIR="$(dirname "$SCRIPT_DIR")"
 TEST_CONFIG="${TEST_CONFIG:-$FLAKYDOCTOR_DIR/test_config.csv}"
 API_KEY_FILE="${API_KEY_FILE:-$FLAKYDOCTOR_DIR/.anthropic_api_key}"
 
+# --skip-repair reproduces the flake only and never calls the API, so it needs no
+# key. Detect it among the passthrough args.
+SKIP_REPAIR="false"
+for _a in "$@"; do [[ "$_a" == "--skip-repair" ]] && SKIP_REPAIR="true"; done
+
+# Resolve the Anthropic key: ANTHROPIC_API_KEY env wins, else the key file.
+# Required only for an actual repair run (matches run_agentic.py's behavior).
+API_KEY="${ANTHROPIC_API_KEY:-}"
+if [[ -z "$API_KEY" && -f "$API_KEY_FILE" ]]; then
+    API_KEY="$(cat "$API_KEY_FILE")"
+fi
+if [[ -z "$API_KEY" ]]; then
+    if [[ "$SKIP_REPAIR" == "true" ]]; then
+        API_KEY="unused"   # never sent to the API in --skip-repair mode
+    else
+        echo "no Anthropic key: set ANTHROPIC_API_KEY=... or create $API_KEY_FILE (or pass --skip-repair)" >&2
+        exit 1
+    fi
+fi
+
 [[ -f "$TEST_CONFIG" ]]   || { echo "test_config.csv not found at $TEST_CONFIG" >&2; exit 1; }
-[[ -f "$API_KEY_FILE" ]]  || { echo "API key file not found at $API_KEY_FILE (set API_KEY_FILE=...)" >&2; exit 1; }
 command -v docker >/dev/null 2>&1 || { echo "docker not installed — see docker/README_af_fd_od.md" >&2; exit 1; }
 
 # Read the row's test_type (col 1) and Java version (col 9) for the container (col 2).
@@ -94,7 +113,7 @@ fi
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp/fdhome \
-    -e ANTHROPIC_API_KEY="$(cat "$API_KEY_FILE")" \
+    -e ANTHROPIC_API_KEY="$API_KEY" \
     -e FD_CLAUDE_MODEL="${FD_CLAUDE_MODEL:-}" \
     -e FD_MAX_ROUNDS="${FD_MAX_ROUNDS:-}" \
     -v "$FLAKYDOCTOR_DIR":/work \

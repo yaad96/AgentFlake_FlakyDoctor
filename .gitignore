@@ -1,8 +1,3 @@
-ReproFlake-C9E6/data/
-
-# Per-user generated run summary
-ReproFlake-C9E6/Complete?Containers?Summary.csv
-
 # FlakyDoctor runtime artifacts — cloned subject projects and per-run outputs
 FlakyDoctor/projects/
 FlakyDoctor/outputs/
