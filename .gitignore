@@ -18,3 +18,6 @@ __pycache__/
 
 # Claude Code session state — local-only, must not be committed
 .claude/
+
+# VS Code workspace settings — local editor config, not part of the project
+.vscode/
