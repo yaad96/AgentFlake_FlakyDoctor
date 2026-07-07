@@ -8,6 +8,9 @@ FlakyDoctor/projects/
 FlakyDoctor/outputs/
 FlakyDoctor/install_*.csv
 
+# Untracked Anthropic API key — holds the secret key, never commit
+.anthropic_api_key
+
 # Python bytecode caches — auto-generated, must never be committed
 __pycache__/
 *.pyc

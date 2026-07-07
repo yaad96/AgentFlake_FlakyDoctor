@@ -243,7 +243,7 @@ Assume required classes in the original code are setup correctly, do not include
         if model == "Claude":
             client = anthropic.Anthropic()
             full_response = client.messages.create(
-                model = "claude-sonnet-4-6",
+                model = os.environ.get("FD_CLAUDE_MODEL") or "claude-sonnet-4-6",
                 max_tokens = 8192,
                 temperature = 0.2,
                 messages = [
@@ -338,7 +338,8 @@ def repair_ID_tests(test_info, model, nondex_times,result_csv,result_json,save_d
         t0 = time.perf_counter()
 
         round = 1
-        while round <= 5:
+        max_rounds = int(os.environ.get("FD_MAX_ROUNDS", "5") or "5")
+        while round <= max_rounds:
             potential_apis = get_potential_API(test_method_content)
             print("Index {}: ROUND {} to Repair Test {}".format(idx, round, test))
             now = datetime.datetime.now()

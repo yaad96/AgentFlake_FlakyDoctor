@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-run_reproflake_id.py — run a ReproFlake ID container end-to-end through FlakyDoctor + Claude.
+run_af_fd_id.py — run an AgentFlake ID container end-to-end through FlakyDoctor + Claude.
 
-The ID analog of run_reproflake.py. It reuses that module's staging / build / maven
+The ID analog of run_af_fd.py. It reuses that module's staging / build / maven
 helpers verbatim, but swaps the OD-specific parts for ID:
 
   1. select the `id` row from test_config.csv (by result_container name)
-  2. stage the Zenodo zip into projects/<zipbase>/<project>/  (reuses run_reproflake)
-  3. git-init a baseline commit                               (reuses run_reproflake)
-  4. build with the container's pre-staged .m2                (reuses run_reproflake)
+  2. stage the Zenodo zip into projects/<zipbase>/<project>/  (reuses run_af_fd)
+  3. git-init a baseline commit                               (reuses run_af_fd)
+  4. build with the container's pre-staged .m2                (reuses run_af_fd)
   5. DETERMINISTICALLY reproduce the ID flake with the CSV's nondexSeed
      (mvn nondex -DnondexSeed=<seed>) — gated on >=1 NonDex iteration failing.
      Zero API cost.
@@ -20,13 +20,12 @@ FlakyDoctor's own per-round NonDex check (src/cmds/run_nondex.sh) is left STOCK
 (probabilistic, nondexRuns only) on purpose — we do not modify FlakyDoctor.
 
 Usage (from the FlakyDoctor root):
-  python3 src/run_reproflake_id.py \
-      --test-config ../ReproFlake-C9E6/test_config.csv \
+  python3 src/run_af_fd_id.py \
       --container apollojavaapolloopenapi5344bc4testFindItemsByNamespace \
-      --api-key "$(cat ~/.anthropic_api_key)"
+      --api-key "$(cat .anthropic_api_key)"
 
-  python3 src/run_reproflake_id.py --test-config ... --list
-  python3 src/run_reproflake_id.py --test-config ... --container X --skip-repair   # reproduce only
+  python3 src/run_af_fd_id.py --list
+  python3 src/run_af_fd_id.py --container X --skip-repair   # reproduce only
 """
 
 import argparse
@@ -37,7 +36,7 @@ import subprocess
 import sys
 import time
 
-import run_reproflake as rf  # reuse stage_container/build_project/maven_env/ensure_git_baseline/...
+import run_af_fd as rf  # reuse stage_container/build_project/maven_env/ensure_git_baseline/...
 
 # Mirror run_nondex.sh's plugin + skip flags so the gate behaves like FlakyDoctor's
 # NonDex run, with one addition: -DnondexSeed for deterministic reproduction.
@@ -77,7 +76,7 @@ def load_id_rows(test_config):
 
 
 def nondex_runs(iterations, cap=10):
-    """ReproFlake's iteration count, capped (a few runs is enough to trip a seeded flake)."""
+    """AgentFlake's iteration count, capped (a few runs is enough to trip a seeded flake)."""
     try:
         n = int(iterations)
     except (TypeError, ValueError):
@@ -136,11 +135,11 @@ def run_flakydoctor_id(container_dir, row, github_url, project_name, projects_di
                        api_key, model, runs, jdk):
     zip_base = os.path.basename(container_dir)
     _, test_dotted = rf.split_test(row["test"])
-    url = github_url or f"https://github.com/reproflake/{project_name}"
+    url = github_url or f"https://github.com/agentflake/{project_name}"
     if url.rstrip("/").split("/")[-1] != project_name:
         rf.die(f"staged dir name '{project_name}' must equal the URL's last segment ({url})")
 
-    out_dir = os.path.join("outputs", f"reproflake_id_{zip_base}_{time.strftime('%Y%m%d_%H%M%S')}")
+    out_dir = os.path.join("outputs", f"af_fd_id_{zip_base}_{time.strftime('%Y%m%d_%H%M%S')}")
     os.makedirs(out_dir, exist_ok=True)
     input_csv = os.path.join(out_dir, "input.csv")
     # repair_ID input format: project,sha,module,test,test_type,status,pr,notes
@@ -199,7 +198,7 @@ def summarize_id(out_dir, container_dir):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--test-config", required=True, help="path to ReproFlake's test_config.csv")
+    ap.add_argument("--test-config", default="test_config.csv", help="path to test_config.csv (default: test_config.csv in the FlakyDoctor root)")
     ap.add_argument("--container", help="result_container name (col 2) of the id row to run")
     ap.add_argument("--list", action="store_true", help="list id rows")
     ap.add_argument("--api-key", help="Anthropic API key (required unless --skip-repair)")

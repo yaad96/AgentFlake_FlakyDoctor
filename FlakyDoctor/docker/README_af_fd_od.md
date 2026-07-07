@@ -1,12 +1,12 @@
-# Running a ReproFlake OD container with FlakyDoctor + Claude (Docker / `testorder`)
+# Running an AgentFlake OD container with FlakyDoctor + Claude (Docker / `testorder`)
 
-Running `src/run_reproflake.py` directly on the host with stock Maven reproduces only
+Running `src/run_af_fd.py` directly on the host with stock Maven reproduces only
 **cross-class** OD pairs deterministically; **same-class** pairs are a gamble because stock
 Surefire cannot order methods within a class.
 
 This setup runs the whole pipeline inside a Docker image that carries the **Illinois
-`testorder` Surefire** (a Maven core extension) — exactly the environment ReproFlake's
-`Dockerfile.od` uses. With it, `-Dtest=polluter,victim -Dsurefire.runOrder=testorder` runs
+`testorder` Surefire** (a Maven core extension) — exactly the environment the original
+testorder `Dockerfile.od` uses. With it, `-Dtest=polluter,victim -Dsurefire.runOrder=testorder` runs
 the two tests in that *exact* order, methods included, so **same-class OD pairs reproduce
 deterministically** too.
 
@@ -32,7 +32,7 @@ docker run --rm hello-world      # verify
 From the FlakyDoctor root:
 
 ```bash
-# reproduce + repair with Claude (key read from ~/.anthropic_api_key):
+# reproduce + repair with Claude (key read from FlakyDoctor/.anthropic_api_key):
 docker/run_in_container.sh ormlitecore59309e5
 
 # a same-class pair — deterministic under testorder:
@@ -43,17 +43,17 @@ docker/run_in_container.sh ormlitecore59309e5 --skip-repair
 ```
 
 The wrapper:
-1. reads the row's Java version from `../ReproFlake-C9E6/test_config.csv`,
+1. reads the row's Java version from `test_config.csv` (in the FlakyDoctor root),
 2. builds `flakydoctor-od8` or `flakydoctor-od11` once (clones + builds the
    Illinois Surefire — a few minutes the first time),
-3. runs the container **as your host UID/GID** with the repo bind-mounted, so
+3. runs the container **as your host UID/GID** with FlakyDoctor bind-mounted, so
    `projects/` and `outputs/` end up owned by you, and invokes
-   `src/run_reproflake.py --testorder --container <id> --model Claude`.
+   `src/run_af_fd.py --testorder --container <id> --model Claude`.
 
 List the runnable OD rows:
 
 ```bash
-python3 src/run_reproflake.py --test-config ../ReproFlake-C9E6/test_config.csv --list
+python3 src/run_af_fd.py --list
 ```
 
 ## Knobs
@@ -68,7 +68,7 @@ python3 src/run_reproflake.py --test-config ../ReproFlake-C9E6/test_config.csv -
 
 ## How the in-container `--testorder` run works
 
-`run_reproflake.py --testorder`:
+`run_af_fd.py --testorder`:
 - skips the stock alphabetical/reverse-alphabetical order *detection*,
 - reproduces with a single `SUREFIRE_RUN_ORDER=testorder` run (gated on the
   victim failing, so no API spend on a polluter/platform failure),

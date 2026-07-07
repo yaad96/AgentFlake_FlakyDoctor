@@ -1,0 +1,9 @@
+# FlakyDoctor Claude-path Python dependencies.
+# No torch/transformers/accelerate here — those are only needed for the local
+# HuggingFace models (MagicCoder/CodeLlama/StarCoder), which are imported lazily.
+anthropic
+openai==0.28.0
+beautifulsoup4==4.12.3
+lxml
+# javalang fork exposing start/end positions (required by FlakyDoctor's AST handling)
+git+https://github.com/jose/javalang.git@start_position_and_end_position

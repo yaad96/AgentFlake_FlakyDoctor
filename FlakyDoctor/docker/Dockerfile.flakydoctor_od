@@ -1,7 +1,7 @@
-# FlakyDoctor OD repair image: the original ReproFlake testorder environment,
+# FlakyDoctor OD repair image: the AgentFlake testorder environment,
 # with FlakyDoctor + the Claude backend layered on top.
 #
-# It reproduces ReproFlake's Dockerfile.od exactly (the Illinois `testorder`
+# It reproduces the original testorder Dockerfile exactly (the Illinois `testorder`
 # Surefire installed as a Maven core extension in /usr/share/maven/lib/ext/),
 # then adds:
 #   - git           (FlakyDoctor's repair_OD git-stashes / git-checkouts files)
@@ -20,7 +20,7 @@ FROM ${BASE}
 
 WORKDIR /app
 
-# Toolchain: ReproFlake's Dockerfile.od set + git (needed by FlakyDoctor) and
+# Toolchain: the base testorder Dockerfile.od set + git (needed by FlakyDoctor) and
 # python3-pip (for the Claude backend).
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -71,7 +71,7 @@ RUN mkdir -p /usr/lib/jvm && \
     ln -sfn "$JAVA_HOME" /usr/lib/jvm/java-1.8.0-openjdk-amd64 && \
     ln -sfn "$JAVA_HOME" /usr/lib/jvm/java-1.11.0-openjdk-amd64
 
-# The image default points repo.local at /root/.m2; run_reproflake overrides it
+# The image default points repo.local at /root/.m2; run_af_fd overrides it
 # per-run (MAVEN_OPTS + MAVEN_ARGS) to the project's staged offline .m2.
 ENV MAVEN_OPTS="-Dmaven.repo.local=/root/.m2/repository"
 ENV PYTHONUNBUFFERED=1

@@ -588,12 +588,10 @@ def generate_prompts(model, victim_name, polluter_name, test_type, \
         if model == "Claude":
             client = anthropic.Anthropic()
             full_response = client.messages.create(
-                model = "claude-sonnet-4-6",
+                model = os.environ.get("FD_CLAUDE_MODEL") or "claude-sonnet-4-6",
                 max_tokens = 8192,
                 temperature = 0.2,
                 messages = [
-                    {"role": "user",
-                    "content":gpt_prompt}
                 ]
             )
             response = full_response.content[0].text
@@ -784,7 +782,8 @@ def repair_OD_tests(test_info, model,result_csv,result_json,save_dir, idx, loadi
         t0 = time.perf_counter()
 
         round = 1
-        while round <= 5:
+        max_rounds = int(os.environ.get("FD_MAX_ROUNDS", "5") or "5")
+        while round <= max_rounds:
             print("Index {}: ROUND {} to Repair Test {}".format(idx, round, victim))
             now = datetime.datetime.now()
             print("Starting prompt", now)

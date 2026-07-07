@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run one ReproFlake OD container through FlakyDoctor + Claude
+# Run one AgentFlake OD container through FlakyDoctor + Claude
 # inside the Illinois `testorder` Surefire environment, so even same-class OD
 # pairs reproduce deterministically.
 #
 # Usage (from the FlakyDoctor root):
-#   docker/run_in_container.sh <result_container> [extra run_reproflake args...]
+#   docker/run_in_container.sh <result_container> [extra run_af_fd args...]
 #
 # Examples:
 #   docker/run_in_container.sh ormlitecore59309e5
@@ -12,35 +12,34 @@
 #   docker/run_in_container.sh ormlitecore59309e5 --skip-repair                    # reproduce only, no API cost
 #
 # What it does:
-#   1. looks up the row in ../ReproFlake-C9E6/test_config.csv to read its Java version
+#   1. looks up the row in test_config.csv (in the FlakyDoctor root) to read its Java version
 #   2. builds the matching image (flakydoctor-od8 / flakydoctor-od11) once
-#   3. runs the container as your host UID/GID with the repo bind-mounted, and
-#      invokes  src/run_reproflake.py --testorder --container <id> --model Claude
+#   3. runs the container as your host UID/GID with FlakyDoctor bind-mounted, and
+#      invokes  src/run_af_fd.py --testorder --container <id> --model Claude
 set -euo pipefail
 
 CONTAINER="${1:-}"
 shift || true
 if [[ -z "$CONTAINER" ]]; then
-    echo "usage: $0 <result_container> [extra run_reproflake args...]" >&2
+    echo "usage: $0 <result_container> [extra run_af_fd args...]" >&2
     exit 1
 fi
 
 # Resolve paths: this script lives in FlakyDoctor/docker/.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLAKYDOCTOR_DIR="$(dirname "$SCRIPT_DIR")"
-REPO_ROOT="$(dirname "$FLAKYDOCTOR_DIR")"
-TEST_CONFIG="${TEST_CONFIG:-$REPO_ROOT/ReproFlake-C9E6/test_config.csv}"
-API_KEY_FILE="${API_KEY_FILE:-$HOME/.anthropic_api_key}"
+TEST_CONFIG="${TEST_CONFIG:-$FLAKYDOCTOR_DIR/test_config.csv}"
+API_KEY_FILE="${API_KEY_FILE:-$FLAKYDOCTOR_DIR/.anthropic_api_key}"
 
 [[ -f "$TEST_CONFIG" ]]   || { echo "test_config.csv not found at $TEST_CONFIG" >&2; exit 1; }
 [[ -f "$API_KEY_FILE" ]]  || { echo "API key file not found at $API_KEY_FILE (set API_KEY_FILE=...)" >&2; exit 1; }
-command -v docker >/dev/null 2>&1 || { echo "docker not installed — see docker/README_reproflake_od.md" >&2; exit 1; }
+command -v docker >/dev/null 2>&1 || { echo "docker not installed — see docker/README_af_fd_od.md" >&2; exit 1; }
 
 # Read the row's test_type (col 1) and Java version (col 9) for the container (col 2).
 ROW_INFO="$(awk -F, -v c="$CONTAINER" '$2==c {print tolower($1)"\t"$9; exit}' "$TEST_CONFIG")"
 if [[ -z "$ROW_INFO" ]]; then
     echo "no row with result_container == $CONTAINER in $TEST_CONFIG" >&2
-    echo "tip: src/run_reproflake.py --list (OD)  |  src/run_reproflake_id.py --list (ID)" >&2
+    echo "tip: src/run_af_fd.py --list (OD)  |  src/run_af_fd_id.py --list (ID)" >&2
     exit 1
 fi
 IFS=$'\t' read -r TEST_TYPE JAVA_VER <<< "$ROW_INFO"
@@ -54,8 +53,8 @@ IFS=$'\t' read -r TEST_TYPE JAVA_VER <<< "$ROW_INFO"
 EXTRA_RUN_ARGS=()
 WITH_TESTORDER="true"   # OD needs the Illinois testorder Surefire; ID never does
 case "$TEST_TYPE" in
-    od) DRIVER="src/run_reproflake.py";    MODE_ARGS="--testorder" ;;
-    id) DRIVER="src/run_reproflake_id.py"; MODE_ARGS=""; WITH_TESTORDER="false"
+    od) DRIVER="src/run_af_fd.py";    MODE_ARGS="--testorder" ;;
+    id) DRIVER="src/run_af_fd_id.py"; MODE_ARGS=""; WITH_TESTORDER="false"
         EXTRA_RUN_ARGS+=(--tmpfs /usr/share/maven/lib/ext) ;;
     *)  echo "unsupported test_type '$TEST_TYPE' for $CONTAINER (only od and id are wired)" >&2; exit 1 ;;
 esac
@@ -80,11 +79,11 @@ if [[ "$WITH_TESTORDER" == "false" && "$JAVA_VER" != "17" ]]; then
     IMAGE="${IMAGE}-noto"
 fi
 
-echo "[reproflake] container=$CONTAINER  type=$TEST_TYPE  java=$JAVA_VER  image=$IMAGE  driver=$DRIVER"
+echo "[af_fd] container=$CONTAINER  type=$TEST_TYPE  java=$JAVA_VER  image=$IMAGE  driver=$DRIVER"
 
 # Build the image once (idempotent: skip if it already exists).
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "[reproflake] building $IMAGE from $BASE (one-time, WITH_TESTORDER=$WITH_TESTORDER) ..."
+    echo "[af_fd] building $IMAGE from $BASE (one-time, WITH_TESTORDER=$WITH_TESTORDER) ..."
     docker build -t "$IMAGE" --build-arg "BASE=$BASE" --build-arg "WITH_TESTORDER=$WITH_TESTORDER" \
         -f "$FLAKYDOCTOR_DIR/docker/Dockerfile.flakydoctor_od" "$FLAKYDOCTOR_DIR"
 fi
@@ -96,12 +95,14 @@ docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp/fdhome \
     -e ANTHROPIC_API_KEY="$(cat "$API_KEY_FILE")" \
-    -v "$REPO_ROOT":/work \
-    -w /work/FlakyDoctor \
+    -e FD_CLAUDE_MODEL="${FD_CLAUDE_MODEL:-}" \
+    -e FD_MAX_ROUNDS="${FD_MAX_ROUNDS:-}" \
+    -v "$FLAKYDOCTOR_DIR":/work \
+    -w /work \
     ${EXTRA_RUN_ARGS[@]+"${EXTRA_RUN_ARGS[@]}"} \
     "$IMAGE" \
     bash -lc 'mkdir -p /tmp/fdhome && python3 -u '"$DRIVER"' \
-        --test-config "'"$(realpath --relative-to="$FLAKYDOCTOR_DIR" "$TEST_CONFIG")"'" \
+        --test-config "'"$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$TEST_CONFIG" "$FLAKYDOCTOR_DIR")"'" \
         --container "'"$CONTAINER"'" \
         '"$MODE_ARGS"' \
         --model Claude \

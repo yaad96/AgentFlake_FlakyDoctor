@@ -18,8 +18,9 @@ src/
 ├── repair_ID.py
 ├── repair_OD.py
 ├── run_FlakyDoctor.sh
-# driver: run a ReproFlake OD container (test_config.csv) end-to-end with Claude
-├── run_reproflake.py
+# drivers: run an AgentFlake OD/ID container (test_config.csv) end-to-end with Claude
+├── run_af_fd.py
+├── run_af_fd_id.py
 ├── setup.sh
 ├── stitching.py
 ├── update_pom.py
@@ -60,7 +61,7 @@ options:
 
 ---
 
-# Running a ReproFlake OD container with FlakyDoctor + Claude (Docker / `testorder`)
+# Running an AgentFlake OD container with FlakyDoctor + Claude (Docker / `testorder`)
 
 `flakydoctor.py` above is the repair engine. It expects each project to be **pre-staged
 and pre-built** at `projects/<sha>/<project>`, reads its own `OD_inputs.csv` format
@@ -68,24 +69,24 @@ and pre-built** at `projects/<sha>/<project>`, reads its own `OD_inputs.csv` for
 `-Dsurefire.runOrder=testorder` — a capability that only exists in the **Illinois fork of
 Surefire** (`TestingResearchIllinois/maven-surefire`). It is *not* present in stock Maven.
 
-The ReproFlake dataset (`../ReproFlake-C9E6/test_config.csv`) is in a different shape:
+The AgentFlake dataset (`test_config.csv`, in the FlakyDoctor root) is in a different shape:
 Zenodo zip snapshots, `Class#method` test names, `od` rows. The setup below bridges that gap
 and runs the whole thing inside a Docker image that carries the `testorder` Surefire, so that
 **even same-class OD pairs reproduce deterministically** (stock Surefire can order classes
-but not methods within one class — see `run_reproflake.py`'s docstring).
+but not methods within one class — see `run_af_fd.py`'s docstring).
 
 ## Components
 
 | Path | Role |
 | --- | --- |
-| `src/run_reproflake.py` | Bridges `test_config.csv` → FlakyDoctor's OD pipeline; `--testorder` mode forces the exact polluter→victim order. |
+| `src/run_af_fd.py` | Bridges `test_config.csv` → FlakyDoctor's OD pipeline; `--testorder` mode forces the exact polluter→victim order. |
 | `docker/Dockerfile.flakydoctor_od` | `maven:3.8.6-openjdk-{8,11}` + Illinois `testorder` Surefire + `git` + the Claude-only Python deps. Symlinks `/usr/lib/jvm/java-1.{8,11}.0-openjdk-amd64` → `/usr/local/openjdk-N` so the **unmodified** `cmds/run_surefire.sh` finds a valid JDK in-container. |
-| `docker/run_in_container.sh` | One-command driver: picks the jdk8/jdk11 image from the row's Java version, builds it once, bind-mounts the repo, runs the `--testorder` pipeline. |
-| `docker/README_reproflake_od.md` | Short companion guide. |
+| `docker/run_in_container.sh` | One-command driver: picks the jdk8/jdk11 image from the row's Java version, builds it once, bind-mounts FlakyDoctor, runs the `--testorder` pipeline. |
+| `docker/README_af_fd_od.md` | Short companion guide. |
 
 ## One-time setup
 
-Install Docker (needs sudo) and put your Anthropic key at `~/.anthropic_api_key`:
+Install Docker (needs sudo) and put your Anthropic key in `.anthropic_api_key` (in the FlakyDoctor root, git-ignored):
 
 ```bash
 sudo apt-get update && sudo apt-get install -y docker.io
@@ -98,13 +99,13 @@ No host JDK/Maven is required — the toolchain lives in the image.
 
 ## How to run
 
-From the **FlakyDoctor root** (`cd ~/Desktop/FlakyRV/FlakyDoctor`):
+From the **FlakyDoctor root** (`cd FlakyDoctor`):
 
 ```bash
 # 1. list the OD containers (yes = cross-class/easy, same-class = harder):
-python3 src/run_reproflake.py --test-config ../ReproFlake-C9E6/test_config.csv --list
+python3 src/run_af_fd.py --list
 
-# 2. full Claude repair on one container (spends API tokens on ~/.anthropic_api_key):
+# 2. full Claude repair on one container (spends API tokens on .anthropic_api_key):
 docker/run_in_container.sh jnrposixd9f3f84
 
 # 3. reproduce only, zero API cost:
@@ -133,7 +134,7 @@ Override the defaults with env vars:
 
 ## Outputs
 
-- `outputs/reproflake_<container>_<timestamp>/` — `results.csv`, `results.json`,
+- `outputs/af_fd_<container>_<timestamp>/` — `results.csv`, `results.json`,
   `details.json` (full per-round Claude prompts/responses), and the patch files.
 - `projects/<container>/Fixed.patch` — the developer's reference fix, for comparison.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-run_reproflake.py — run a ReproFlake OD container end-to-end through FlakyDoctor.
+run_af_fd.py — run an AgentFlake OD container end-to-end through FlakyDoctor.
 
-Bridges the format gap between ReproFlake's test_config.csv (Zenodo zip snapshots,
+Bridges the format gap between AgentFlake's test_config.csv (Zenodo zip snapshots,
 Class#method test names) and FlakyDoctor's OD pipeline (projects/<sha>/<name> git
 checkouts, dotted test names), then executes the proven pipeline:
 
@@ -18,13 +18,12 @@ checkouts, dotted test names), then executes the proven pipeline:
   8. summarize rounds / winning patch, and point at the developer's Fixed.patch
 
 Usage (from the FlakyDoctor root):
-  python3 src/run_reproflake.py \
-      --test-config ../ReproFlake-C9E6/test_config.csv \
+  python3 src/run_af_fd.py \
       --container ormlitecore59309e5 \
-      --api-key "$(cat ~/.anthropic_api_key)"
+      --api-key "$(cat .anthropic_api_key)"
 
-  python3 src/run_reproflake.py --test-config ... --list          # list runnable od rows
-  python3 src/run_reproflake.py --test-config ... --container X --skip-repair
+  python3 src/run_af_fd.py --list                       # list runnable od rows
+  python3 src/run_af_fd.py --container X --skip-repair
 """
 
 import argparse
@@ -56,11 +55,11 @@ MVN_SKIP_FLAGS_ANTRUN = [f for f in MVN_SKIP_FLAGS if f != "-Dmaven.antrun.skip"
 
 
 def log(msg):
-    print(f"[run_reproflake] {msg}", flush=True)
+    print(f"[run_af_fd] {msg}", flush=True)
 
 
 def die(msg, code=1):
-    print(f"[run_reproflake] ERROR: {msg}", file=sys.stderr, flush=True)
+    print(f"[run_af_fd] ERROR: {msg}", file=sys.stderr, flush=True)
     sys.exit(code)
 
 
@@ -125,7 +124,7 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         log(f"already staged: {project_dir} (skipping download)")
         return container_dir, project_dir, project_name, github_url
 
-    zip_path = os.path.join("/tmp", f"reproflake_{zip_base}.zip")
+    zip_path = os.path.join("/tmp", f"af_fd_{zip_base}.zip")
     if not os.path.exists(zip_path):
         log(f"downloading {row['url']} ...")
         try:
@@ -141,7 +140,7 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
     if not zipfile.is_zipfile(zip_path):
         os.remove(zip_path)
         die(f"{zip_path} is not a valid zip (corrupt download removed — rerun to refetch)")
-    extract_root = os.path.join("/tmp", f"reproflake_extract_{zip_base}")
+    extract_root = os.path.join("/tmp", f"af_fd_extract_{zip_base}")
     shutil.rmtree(extract_root, ignore_errors=True)
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(extract_root)
@@ -213,7 +212,7 @@ def ensure_git_baseline(project_dir):
     # git config (the image has neither user.name nor user.email set).
     subprocess.run(["git", "-C", project_dir,
                     "-c", "user.name=FlakyDoctor", "-c", "user.email=flakydoctor@local",
-                    "commit", "-qm", "ReproFlake snapshot baseline"], check=True)
+                    "commit", "-qm", "AgentFlake snapshot baseline"], check=True)
 
 
 # -------------------------------------------------------------------- maven
@@ -260,7 +259,7 @@ def maven_env(container_dir, jdk):
 def clean_m2_markers(container_dir):
     """Remove Maven resolution-failure markers from the staged offline .m2 so that
     locally-present artifacts resolve from the local repo instead of being re-queried
-    against now-dead remote repos. ReproFlake's staged .m2 was populated on machines
+    against now-dead remote repos. AgentFlake's staged .m2 was populated on machines
     with the projects' (often http://) repositories configured; Maven 3.8+ blocks
     http:// and re-verifies artifacts cached from unknown remote IDs. We strip:
       _remote.repositories - origin-tracking; deleting makes cached artifacts count
@@ -300,7 +299,7 @@ def strip_snapshot_versions(project_dir):
 
 def build_project(container_dir, project_dir, module, jdk):
     clean_m2_markers(container_dir)
-    marker = os.path.join(project_dir, ".reproflake_built")
+    marker = os.path.join(project_dir, ".af_fd_built")
     if os.path.exists(marker):
         built_jdk = open(marker).read().strip() or jdk
         log(f"already built with JDK {built_jdk} (marker exists) — skipping build")
@@ -433,7 +432,7 @@ def detect_order_and_reproduce(container_dir, project_dir, module, row, jdk):
         if result == "test_pass":
             die("polluter ran first but the victim PASSED — flake does not reproduce "
                 "in this environment; not spending API calls. (Try Linux/the original "
-                "ReproFlake container, or another row.)")
+                "AgentFlake container, or another row.)")
         die(f"unexpected surefire result '{result}' — check the build (last lines):\n"
             + "\n".join(out.splitlines()[-15:]))
     die(f"neither run order put polluter class {p_class} first — same-package "
@@ -546,11 +545,11 @@ def run_flakydoctor(container_dir, row, github_url, project_name, projects_dir,
     zip_base = os.path.basename(container_dir)
     _, victim_dotted = split_test(row["victim"])
     _, polluter_dotted = split_test(row["polluter"])
-    url = github_url or f"https://github.com/reproflake/{project_name}"
+    url = github_url or f"https://github.com/agentflake/{project_name}"
     if url.rstrip("/").split("/")[-1] != project_name:
         die(f"staged dir name '{project_name}' must equal the URL's last segment ({url})")
 
-    out_dir = os.path.join("outputs", f"reproflake_{zip_base}_{time.strftime('%Y%m%d_%H%M%S')}")
+    out_dir = os.path.join("outputs", f"af_fd_{zip_base}_{time.strftime('%Y%m%d_%H%M%S')}")
     os.makedirs(out_dir, exist_ok=True)
     input_csv = os.path.join(out_dir, "input.csv")
     with open(input_csv, "w") as f:
@@ -606,8 +605,8 @@ def summarize(out_dir, container_dir):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--test-config", required=True,
-                    help="path to ReproFlake's test_config.csv")
+    ap.add_argument("--test-config", default="test_config.csv",
+                    help="path to test_config.csv (default: test_config.csv in the FlakyDoctor root)")
     ap.add_argument("--container", help="result_container name (col 2) of the od row to run")
     ap.add_argument("--list", action="store_true",
                     help="list od rows and whether they are runnable on stock Surefire")
