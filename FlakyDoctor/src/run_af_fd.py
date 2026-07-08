@@ -171,7 +171,7 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         # lands cleanly (shutil.move into an existing dir would nest it as <project>/Flaky).
         _rmtree_force(dest)
     shutil.move(os.path.join(src_root, "Flaky"), dest)
-    for extra in ("Flakym2", "Fixed.patch", "flaky_info.txt"):
+    for extra in ("Flakym2", "Fixed.patch", "FlakyCodeChange.patch", "flaky_info.txt"):
         src = os.path.join(src_root, extra)
         if os.path.exists(src) and not os.path.exists(os.path.join(container_dir, extra)):
             shutil.move(src, os.path.join(container_dir, extra))
