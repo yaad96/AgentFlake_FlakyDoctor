@@ -1,9 +1,10 @@
 # FlakyDoctor — AgentFlake Version
 
-FlakyDoctor repairs Implementation-Dependent (ID) and Order-Dependent (OD) flaky
-Java tests with a neuro-symbolic loop. This version adds a **Claude** (Anthropic)
-backend and a containerized runner that reproduces a flake inside Docker and
-repairs it with the original FlakyDoctor pipeline.
+FlakyDoctor repairs Implementation-Dependent (ID), Order-Dependent (OD), and
+Non-Idempotent-Outcome (NIO) flaky Java tests with a neuro-symbolic loop. This
+version adds a **Claude** (Anthropic) backend and a containerized runner that
+reproduces a flake inside Docker and repairs it with the original FlakyDoctor
+pipeline.
 
 
 ## Requirements
@@ -17,11 +18,10 @@ repairs it with the original FlakyDoctor pipeline.
 
 From the repo root, create a file ".anthropic_api_key" and store your api key there. During the run, the key needed will be accessed from there. It is git-ignored, so its safe. 
 
-
-## Run a container (ID or OD)
+## Run a container (ID, OD, or NIO)
 
 The runner auto-detects the test type from `test_config.csv`, so the same command
-handles both ID and OD — just pass the `result_container` name:
+handles ID, OD, and NIO — just pass the `result_container` name:
 
 ```bash
 cd FlakyDoctor
@@ -33,6 +33,7 @@ List the runnable containers:
 ```bash
 python3 src/run_af_fd.py --list        # OD rows
 python3 src/run_af_fd_id.py --list     # ID rows
+python3 src/run_af_fd_nio.py --list    # NIO rows
 ```
 
 ### Examples
@@ -45,6 +46,9 @@ python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
 # ID
 cd FlakyDoctor
 python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
+
+# NIO
+python3 runner/run_claude.py quickcheckc1c1 --runs 1 --models claude
 
 
 

@@ -63,19 +63,21 @@ if [[ -z "$ROW_INFO" ]]; then
 fi
 IFS=$'\t' read -r TEST_TYPE JAVA_VER <<< "$ROW_INFO"
 
-# OD and ID share the same image. Pick the driver + mode flags by test_type.
-# For ID we must DISABLE the Illinois testorder Surefire extension: it lives in
+# OD, ID and NIO share the same image. Pick the driver + mode flags by test_type.
+# For ID and NIO we must DISABLE the Illinois testorder Surefire extension: it lives in
 # /usr/share/maven/lib/ext and forces maven-surefire-plugin:3.0.0-M8-SNAPSHOT into
-# every build, which the ID container's offline .m2 doesn't have (ID is built with
-# NonDex, not testorder) -> build failure. An empty tmpfs over that dir hides the
+# every build, which the offline .m2 doesn't have (ID is built with NonDex and NIO with
+# stock Surefire, not testorder) -> build failure. An empty tmpfs over that dir hides the
 # extension so Maven uses the project's own surefire. OD keeps it (testorder needed).
 EXTRA_RUN_ARGS=()
-WITH_TESTORDER="true"   # OD needs the Illinois testorder Surefire; ID never does
+WITH_TESTORDER="true"   # OD needs the Illinois testorder Surefire; ID and NIO never do
 case "$TEST_TYPE" in
     od) DRIVER="src/run_af_fd.py";    MODE_ARGS="--testorder" ;;
     id) DRIVER="src/run_af_fd_id.py"; MODE_ARGS=""; WITH_TESTORDER="false"
         EXTRA_RUN_ARGS+=(--tmpfs /usr/share/maven/lib/ext) ;;
-    *)  echo "unsupported test_type '$TEST_TYPE' for $CONTAINER (only od and id are wired)" >&2; exit 1 ;;
+    nio) DRIVER="src/run_af_fd_nio.py"; MODE_ARGS=""; WITH_TESTORDER="false"
+        EXTRA_RUN_ARGS+=(--tmpfs /usr/share/maven/lib/ext) ;;
+    *)  echo "unsupported test_type '$TEST_TYPE' for $CONTAINER (only od, id and nio are wired)" >&2; exit 1 ;;
 esac
 
 # Base image per JDK. JDK 17 has no maven:3.8.6-openjdk-17 tag and the old
@@ -115,6 +117,8 @@ docker run --rm \
     -e HOME=/tmp/fdhome \
     -e ANTHROPIC_API_KEY="$API_KEY" \
     -e FD_CLAUDE_MODEL="${FD_CLAUDE_MODEL:-}" \
+    -e KEEP_SOURCE="${KEEP_SOURCE:-}" \
+    -e KEEP_FLAKY_M2="${KEEP_FLAKY_M2:-}" \
     -v "$FLAKYDOCTOR_DIR":/work \
     -w /work \
     ${EXTRA_RUN_ARGS[@]+"${EXTRA_RUN_ARGS[@]}"} \

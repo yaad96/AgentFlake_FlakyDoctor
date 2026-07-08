@@ -4,15 +4,16 @@ import openai
 import sys
 import repair_ID
 import repair_OD
+import repair_NIO
 
 def parse_args():
     parser = argparse.ArgumentParser(description="""
-            FlakyDoctor: Neuro-symbolic repair of Implementation-Dependent (ID) and Order-Dependent (OD) flaky tests.
+            FlakyDoctor: Neuro-symbolic repair of Implementation-Dependent (ID), Order-Dependent (OD), and Non-Idempotent-Outcome (NIO) flaky tests.
             """,)
     parser.add_argument("--input-tests-csv", dest = "input_tests_csv", required = True,
                         help = "A csv file include flaky tests with consistent format as in IDoFT `pr-data.csv`.")
     parser.add_argument("--flakiness-type", dest = "flakiness_type", required = True,
-                        help = "Flakiness type to fix, select one from [ID, OD].")
+                        help = "Flakiness type to fix, select one from [ID, OD, NIO].")
     parser.add_argument("--projects", dest = "projects", required = True,
                         help = "A directory path where you save all the Java projects.")
     parser.add_argument("--api-key", "--openai-key", dest = "openai_key", required = True,
@@ -55,5 +56,7 @@ if __name__ == "__main__":
         repair_ID.main(input_flakies_csv, projects_dir, details_json, model, nondex_times, result_csv, result_json, output_dir)
     elif flakiness_type == "OD":
         repair_OD.main(input_flakies_csv, projects_dir, details_json, model, nondex_times, result_csv, result_json, output_dir)
+    elif flakiness_type == "NIO":
+        repair_NIO.main(input_flakies_csv, projects_dir, details_json, model, nondex_times, result_csv, result_json, output_dir)
 
 

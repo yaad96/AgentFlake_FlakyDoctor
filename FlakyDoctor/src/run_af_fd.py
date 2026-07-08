@@ -164,7 +164,13 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         else row["zip_id"].split("=")[0]
 
     os.makedirs(container_dir, exist_ok=True)
-    shutil.move(os.path.join(src_root, "Flaky"), os.path.join(container_dir, project_name))
+    dest = os.path.join(container_dir, project_name)
+    if os.path.exists(dest):
+        # a previous run's cleanup can leave a gutted source dir (surefire reports,
+        # .git text remnants) with no pom.xml behind; remove it so the fresh Flaky/
+        # lands cleanly (shutil.move into an existing dir would nest it as <project>/Flaky).
+        _rmtree_force(dest)
+    shutil.move(os.path.join(src_root, "Flaky"), dest)
     for extra in ("Flakym2", "Fixed.patch", "flaky_info.txt"):
         src = os.path.join(src_root, extra)
         if os.path.exists(src) and not os.path.exists(os.path.join(container_dir, extra)):
@@ -210,6 +216,143 @@ def remove_flaky_m2(container_dir):
     if os.path.isdir(m2_dir):
         shutil.rmtree(m2_dir, ignore_errors=True)
         log(f"cleanup: removed offline maven repo {m2_dir} (KEEP_FLAKY_M2=1 to keep)")
+
+
+def _rmtree_force(path):
+    """Remove a whole directory tree, returning (files_removed, bytes_removed). Uses
+    `rm -rf`, which reliably clears trees that shutil.rmtree leaves partially removed on
+    macOS — a committed .git carries thousands of objects plus files with BSD flags
+    (UF_HIDDEN) / extended attributes that make fd-based rmtree drop a few entries per
+    pass. Falls back to a chmod-retry shutil.rmtree if `rm` is somehow unavailable."""
+    files = total = 0
+    for r, _ds, fs in os.walk(path):
+        for name in fs:
+            try:
+                total += os.path.getsize(os.path.join(r, name))
+                files += 1
+            except OSError:
+                pass
+
+    try:
+        subprocess.run(["rm", "-rf", path], check=False)
+    except (OSError, ValueError):
+        def _onerror(func, p, _exc):
+            try:
+                os.chmod(p, 0o700)
+                func(p)
+            except OSError:
+                pass
+        for _ in range(5):
+            if not os.path.isdir(path):
+                break
+            shutil.rmtree(path, onerror=_onerror)
+    return files, total
+
+
+# The only staged-project content kept after a run is the surefire/failsafe test failure
+# log; the whole rest of the source tree is deleted.
+_TARGET_KEEP = frozenset({"surefire-reports", "failsafe-reports"})
+
+
+def _reduce_dir_to_reports(project_dir, drop):
+    """Delete everything under `project_dir` except the surefire/failsafe report subtrees
+    (and the directory chain leading down to them). `drop(path)` removes a file or a whole
+    tree and accumulates the caller's counters. A project with no reports is deleted whole."""
+    proot = os.path.realpath(project_dir)
+    # 1. locate the report dirs (don't descend into them during the scan)
+    reports = []
+    for root, dirs, _files in os.walk(project_dir):
+        for d in list(dirs):
+            if d in _TARGET_KEEP:
+                reports.append(os.path.realpath(os.path.join(root, d)))
+                dirs.remove(d)
+    if not reports:
+        drop(project_dir)
+        return
+    # 2. the report dirs + their ancestor chain up to project_dir are kept
+    keep = {proot}
+    for rp in reports:
+        p = rp
+        while p != proot and os.path.dirname(p) != p:
+            keep.add(p)
+            p = os.path.dirname(p)
+    # 3. collect everything off that chain (scan fully first, remove after -- never rm mid-walk)
+    to_remove = []
+    for root, dirs, files in os.walk(project_dir, topdown=True):
+        rroot = os.path.realpath(root)
+        if rroot in reports or any(rroot.startswith(r + os.sep) for r in reports):
+            dirs[:] = []                       # inside a report subtree: keep as-is
+            continue
+        for name in files:
+            to_remove.append(os.path.join(root, name))
+        for d in list(dirs):
+            dpath = os.path.realpath(os.path.join(root, d))
+            if dpath in keep:
+                continue                       # ancestor of a report: descend into it
+            to_remove.append(os.path.join(root, d))
+            dirs.remove(d)                     # off-path subtree: remove wholesale
+    for path in to_remove:
+        drop(path)
+
+
+def prune_container_dir(container_dir):
+    """Reclaim disk after a completed run: reduce projects/<container>/ to just the developer
+    solution (Fixed.patch), the flake metadata (flaky_info.txt), and the test failure log
+    (surefire-reports / failsafe-reports). The entire staged source tree is deleted -- the fix
+    lives in Fixed.patch (and the FlakyDoctor patch / semantic diff) and the failure in the
+    reports and the data/<container>/run_NN archive. The offline maven repo (Flakym2) is left
+    to remove_flaky_m2. Skipped when KEEP_SOURCE=1 (e.g. between pass@k runs, or to inspect
+    the staged tree by hand)."""
+    if os.environ.get("KEEP_SOURCE") == "1":
+        return
+    if not os.path.isdir(container_dir):
+        return
+    croot = os.path.realpath(container_dir)
+    removed_files = removed_bytes = removed_dirs = 0
+
+    def _drop(path):
+        nonlocal removed_files, removed_bytes, removed_dirs
+        if os.path.isdir(path) and not os.path.islink(path):
+            n, b = _rmtree_force(path)
+            removed_files += n
+            removed_bytes += b
+            removed_dirs += 1
+        else:
+            try:
+                removed_bytes += os.path.getsize(path)
+            except OSError:
+                pass
+            try:
+                os.remove(path)
+                removed_files += 1
+            except OSError:
+                pass
+
+    # Keep the container's root files (Fixed.patch, flaky_info.txt) and Flakym2 (handled by
+    # remove_flaky_m2); reduce every staged project directory to just its failure reports.
+    for entry in sorted(os.listdir(container_dir)):
+        full = os.path.join(container_dir, entry)
+        if entry == "Flakym2":
+            continue
+        if not os.path.isdir(full) or os.path.islink(full):
+            continue
+        _reduce_dir_to_reports(full, _drop)
+
+    # prune the empty directory skeleton left behind (keep the container dir itself)
+    for root, dirs, files in os.walk(container_dir, topdown=False):
+        if os.path.realpath(root) == croot:
+            continue
+        try:
+            if not os.listdir(root):
+                os.rmdir(root)
+                removed_dirs += 1
+        except OSError:
+            pass
+
+    if removed_files or removed_dirs:
+        log(f"cleanup: reduced {container_dir} to metadata + failure reports "
+            f"(removed {removed_files} file(s), ~{removed_bytes // (1024*1024)} MB, "
+            f"{removed_dirs} dir(s); KEEP_SOURCE=1 to skip)")
 
 
 def ensure_git_baseline(project_dir):
@@ -737,6 +880,7 @@ def main():
     summarize(out_dir, container_dir)
     generate_semantic_diff(out_dir)
     remove_flaky_m2(container_dir)
+    prune_container_dir(container_dir)
 
 
 if __name__ == "__main__":

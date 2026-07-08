@@ -10,8 +10,8 @@ It drives FlakyDoctor's existing container pipeline
 (docker/run_in_container.sh -> run_af_fd.py / run_af_fd_id.py -> flakydoctor.py).
 
 NOTE: this is a plain CLI runner, not an agent — FlakyDoctor calls the Anthropic
-API directly inside its neuro-symbolic repair loop. FlakyDoctor repairs ID and OD
-only — NIO/TD containers are not supported.
+API directly inside its neuro-symbolic repair loop. FlakyDoctor repairs ID, OD and
+NIO — TD containers are not supported.
 
 - Reads FlakyDoctor/test_config.csv, dispatches by test type.
 - Runs the repair once per --runs, archiving each to
@@ -45,7 +45,7 @@ KEY_FILE = FLAKYDOCTOR_DIR / ".anthropic_api_key"
 sys.path.insert(0, str(SCRIPT_DIR))
 import config  # noqa: E402
 
-SUPPORTED_TYPES = {"od", "id"}
+SUPPORTED_TYPES = {"od", "id", "nio"}
 
 
 def log(msg: str) -> None:
@@ -142,7 +142,10 @@ def run_once(container: str, test_type: str, model_alias: str, model_id: str,
     env["FD_CLAUDE_MODEL"] = model_id
     env["ANTHROPIC_API_KEY"] = key
     if keep_m2:
-        env["KEEP_FLAKY_M2"] = "1"  # keep the offline .m2 until the final run of a batch
+        # keep the offline .m2 AND the staged source/build between pass@k runs;
+        # both are cleaned up on the final run of the batch.
+        env["KEEP_FLAKY_M2"] = "1"
+        env["KEEP_SOURCE"] = "1"
 
     cmd = ["bash", str(RUN_IN_CONTAINER), container]
     if reproduce_only:
@@ -220,7 +223,7 @@ def append_summary(container: str, metas: list[dict]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="CLI runner for FlakyDoctor's Claude repair (ID/OD only).")
+        description="CLI runner for FlakyDoctor's Claude repair (ID/OD/NIO only).")
     ap.add_argument("container", help="result_container name from test_config.csv")
     ap.add_argument("--models", default="claude",
                     help="comma-separated Claude model aliases/ids (default: claude)")
@@ -237,8 +240,8 @@ def main() -> None:
         die(f"container '{args.container}' not found in {CSV_FILE.name}")
     test_type = (row.get("test_type") or "").strip().lower()
     if test_type not in SUPPORTED_TYPES:
-        die(f"test type '{test_type}' is not supported by FlakyDoctor (only ID and OD). "
-            f"NIO/TD/other containers cannot be repaired here.")
+        die(f"test type '{test_type}' is not supported by FlakyDoctor (only ID, OD and NIO). "
+            f"TD/other containers cannot be repaired here.")
     if args.runs < 1:
         die("--runs must be >= 1")
 

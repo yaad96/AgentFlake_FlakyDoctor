@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 
 run_nondex_cmds = "src/cmds/run_nondex.sh"
+run_nio_cmds = "src/cmds/run_nio.sh"
 
 def analyze_nondex_test_result(output):
     all_test_results = []
@@ -309,6 +310,50 @@ def parse_compilation_err(output, test_class, test_class_content):
 def run_test_with_nondex(project_dir, module, test_fullname, jdk, nondex_times):
     test = utils.replace_last_symbol(test_fullname, ".", "#")
     result = subprocess.run(["bash", run_nondex_cmds,project_dir,module,test,jdk,nondex_times], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output = result.stdout.decode('utf-8')
+    print(output)
+    return output
+
+def analyze_nio_test_result(output):
+    # The NIO wrapper is a single JUnit test (runTwice) that runs the victim twice in one
+    # JVM. It reports one "Tests run: 1" Surefire line, so the pass/fail parsing is identical
+    # to the single-test NonDex case above.
+    all_test_results = []
+    output_list = output.split("\n")
+    for line in output_list:
+        if "Tests run: 1, Failures: 0, Errors: 0, Skipped: 0" in line:
+            all_test_results.append("test_pass")
+        elif "Tests run: 1, Failures: 1, Errors: 0, Skipped: 0" in line:
+            all_test_results.append("test_failure")
+        elif "Tests run: 1, Failures: 0, Errors: 1, Skipped: 0" in line:
+            all_test_results.append("test_failure")
+    if len(all_test_results) == 0:
+        if "COMPILATION ERROR" in output:
+            return "compilation_error"
+        elif "BUILD FAILURE" in output:
+            return "build_failure"
+        elif "processing the POMs" in output:
+            return "pom_error"
+        else:
+            return "build_failure"
+    if "test_pass" in all_test_results and "test_failure" not in all_test_results:
+        return "test_pass"
+    else:
+        return "test_failure"
+
+def analyze_nio_build_result(output):
+    output_list = output.split("\n")
+    result = "BUILD FAILURE"
+    for line in output_list:
+        if "BUILD FAILURE" in line:
+            result = "BUILD FAILURE"
+        elif "BUILD SUCCESS" in line:
+            result = "BUILD SUCCESS"
+    return result
+
+def run_test_with_nio(project_dir, module, wrapper_fullname, jdk):
+    wrapper_test = utils.replace_last_symbol(wrapper_fullname, ".", "#")
+    result = subprocess.run(["bash", run_nio_cmds,project_dir,module,wrapper_test,jdk], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output = result.stdout.decode('utf-8')
     print(output)
     return output
