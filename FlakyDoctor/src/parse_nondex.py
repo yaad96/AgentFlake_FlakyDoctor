@@ -14,6 +14,8 @@ from bs4 import BeautifulSoup
 from pathlib import Path
 
 run_nondex_cmds = "src/cmds/run_nondex.sh"
+run_nio_cmds = "src/cmds/run_nio.sh"
+run_td_cmds = "src/cmds/run_td.sh"
 
 def analyze_nondex_test_result(output):
     all_test_results = []
@@ -312,3 +314,109 @@ def run_test_with_nondex(project_dir, module, test_fullname, jdk, nondex_times):
     output = result.stdout.decode('utf-8')
     print(output)
     return output
+
+def analyze_nio_test_result(output):
+    # The NIO wrapper is a single JUnit test (runTwice) that runs the victim twice in one
+    # JVM. It reports one "Tests run: 1" Surefire line, so the pass/fail parsing is identical
+    # to the single-test NonDex case above.
+    all_test_results = []
+    output_list = output.split("\n")
+    for line in output_list:
+        if "Tests run: 1, Failures: 0, Errors: 0, Skipped: 0" in line:
+            all_test_results.append("test_pass")
+        elif "Tests run: 1, Failures: 1, Errors: 0, Skipped: 0" in line:
+            all_test_results.append("test_failure")
+        elif "Tests run: 1, Failures: 0, Errors: 1, Skipped: 0" in line:
+            all_test_results.append("test_failure")
+    if len(all_test_results) == 0:
+        if "COMPILATION ERROR" in output:
+            return "compilation_error"
+        elif "BUILD FAILURE" in output:
+            return "build_failure"
+        elif "processing the POMs" in output:
+            return "pom_error"
+        else:
+            return "build_failure"
+    if "test_pass" in all_test_results and "test_failure" not in all_test_results:
+        return "test_pass"
+    else:
+        return "test_failure"
+
+def analyze_nio_build_result(output):
+    output_list = output.split("\n")
+    result = "BUILD FAILURE"
+    for line in output_list:
+        if "BUILD FAILURE" in line:
+            result = "BUILD FAILURE"
+        elif "BUILD SUCCESS" in line:
+            result = "BUILD SUCCESS"
+    return result
+
+def run_test_with_nio(project_dir, module, wrapper_fullname, jdk):
+    wrapper_test = utils.replace_last_symbol(wrapper_fullname, ".", "#")
+    result = subprocess.run(["bash", run_nio_cmds,project_dir,module,wrapper_test,jdk], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output = result.stdout.decode('utf-8')
+    print(output)
+    return output
+
+# ------------------------------------------------------------ TD forcing oracle
+# A TD (Test/Timing-Dependent) victim PASSES when run on its own on the pristine tree; it fails
+# only under the FlakyCodeChange timing forcing (a perturbation -- e.g. an injected Thread.sleep
+# in the victim's hot path -- that makes the latent timing flake deterministic). So the
+# verification oracle runs the victim WITH the forcing applied: a real fix passes even under the
+# forcing, while an empty/no-op patch collapses to the forcing tree and still fails. FlakyDoctor's
+# single-method repair stays intact -- the forcing is applied only for the duration of the run and
+# reverted immediately after, so the fix (a working-tree change to the victim method) is all that
+# persists between rounds. The forcing takes effect only when it lives inside the victim's module
+# (mvn test -pl <module> recompiles that module, without -am), matching the reference verify.
+
+def run_test_with_td(project_dir, module, test_fullname, jdk):
+    # The FlakyCodeChange forcing lives one dir up from the checkout, next to Fixed.patch
+    # (projects/<container>/FlakyCodeChange.patch); run_td.sh applies it, runs the victim, then
+    # reverts it. Absolute path so it survives run_td.sh's cd into the project.
+    test = utils.replace_last_symbol(test_fullname, ".", "#")
+    forcing = os.path.join(os.path.dirname(os.path.abspath(project_dir)), "FlakyCodeChange.patch")
+    result = subprocess.run(["bash", run_td_cmds, project_dir, module, test, jdk, forcing], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output = result.stdout.decode('utf-8')
+    print(output)
+    return output
+
+
+def analyze_td_test_result(output):
+    # The victim runs alone under the FlakyCodeChange forcing. Usually one Surefire test, but a
+    # timing forcing that trips the victim's @Test(timeout=) makes JUnit report the SAME victim
+    # TWICE (the timeout watchdog PLUS the still-running test thread's own exception) -> e.g.
+    # "Tests run: 2, Errors: 2". So classify each Surefire totals line by its failures+errors for
+    # ANY test count (like OD's 2-test parser), not by an exact "Tests run: 1".
+    all_test_results = []
+    for line in output.split("\n"):
+        m = re.search(r"Tests run: \d+, Failures: (\d+), Errors: (\d+)", line)
+        if m:
+            if int(m.group(1)) + int(m.group(2)) == 0:
+                all_test_results.append("test_pass")
+            else:
+                all_test_results.append("test_failure")
+    if len(all_test_results) == 0:
+        if "COMPILATION ERROR" in output:
+            return "compilation_error"
+        elif "BUILD FAILURE" in output:
+            return "build_failure"
+        elif "processing the POMs" in output:
+            return "pom_error"
+        else:
+            return "build_failure"
+    if "test_pass" in all_test_results and "test_failure" not in all_test_results:
+        return "test_pass"
+    else:
+        return "test_failure"
+
+
+def analyze_td_build_result(output):
+    output_list = output.split("\n")
+    result = "BUILD FAILURE"
+    for line in output_list:
+        if "BUILD FAILURE" in line:
+            result = "BUILD FAILURE"
+        elif "BUILD SUCCESS" in line:
+            result = "BUILD SUCCESS"
+    return result

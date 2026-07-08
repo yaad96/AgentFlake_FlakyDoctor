@@ -1,7 +1,8 @@
 # FlakyDoctor — AgentFlake Version
 
-FlakyDoctor repairs Implementation-Dependent (ID), Order-Dependent (OD), and
-Non-Idempotent-Outcome (NIO) flaky Java tests with a neuro-symbolic loop. This
+FlakyDoctor repairs Implementation-Dependent (ID), Order-Dependent (OD),
+Non-Idempotent-Outcome (NIO), and Test/Timing-Dependent (TD) flaky Java tests with a
+neuro-symbolic loop. This
 version adds a **Claude** (Anthropic) backend and a containerized runner that
 reproduces a flake inside Docker and repairs it with the original FlakyDoctor
 pipeline.
@@ -14,14 +15,23 @@ pipeline.
 - Works on **Linux and macOS**. The host only needs `bash`, `python3`, and
   `docker`; the JDK/Maven toolchain lives in the image.
 
-## setup
+## One-command setup
 
-From the repo root, create a file ".anthropic_api_key" and store your api key there. During the run, the key needed will be accessed from there. It is git-ignored, so its safe. 
+From the repo root:
 
-## Run a container (ID, OD, or NIO)
+```bash
+ANTHROPIC_API_KEY=sk-ant-... bash FlakyDoctor/setup.sh --build-images
+```
+
+This stores the key in `FlakyDoctor/.anthropic_api_key` (git-ignored), checks
+Docker, and prebuilds the OD/ID/NIO/TD images. Omit `--build-images` to build each image
+on first use. The `ANTHROPIC_API_KEY` environment variable always overrides the
+key file.
+
+## Run a container (ID, OD, NIO, or TD)
 
 The runner auto-detects the test type from `test_config.csv`, so the same command
-handles ID, OD, and NIO — just pass the `result_container` name:
+handles ID, OD, NIO, and TD — just pass the `result_container` name:
 
 ```bash
 cd FlakyDoctor
@@ -34,21 +44,23 @@ List the runnable containers:
 python3 src/run_af_fd.py --list        # OD rows
 python3 src/run_af_fd_id.py --list     # ID rows
 python3 src/run_af_fd_nio.py --list    # NIO rows
+python3 src/run_af_fd_td.py --list     # TD rows
 ```
 
 ### Examples
 
 ```bash
-cd FlakyDoctor
 # OD
 python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
 
 # ID
-cd FlakyDoctor
 python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
 
 # NIO
 python3 runner/run_claude.py quickcheckc1c1 --runs 1 --models claude
+
+# TD
+python3 runner/run_claude.py BOOKKEEPER-846 --runs 1 --models claude
 
 
 

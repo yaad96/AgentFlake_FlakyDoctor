@@ -21,10 +21,10 @@ FROM ${BASE}
 WORKDIR /app
 
 # Toolchain: the base testorder Dockerfile.od set + git (needed by FlakyDoctor) and
-# python3-pip (for the Claude backend).
+# python3-pip (for the Claude backend). `patch` applies/reverts the TD FlakyCodeChange forcing.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        autoconf automake libtool curl make g++ unzip \
+        autoconf automake libtool curl make g++ unzip patch \
         python3 python3-pip git xmlstarlet && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
