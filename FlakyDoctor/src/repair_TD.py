@@ -118,6 +118,24 @@ def main(pr_csv, projects_dir, details_csv, model, nondex_times, result_csv, res
                         info["test_class_content"][0] = test_class_content
                         info["imports"] = utils.get_imports(test_class_content)
                         info["test_method_content"] = utils.get_test_method(info["method_name"],test_class_content)
+                        if info["test_method_content"] is None:
+                            # The victim method may be inherited from a base class (not defined
+                            # in this concrete test file). Follow the extends chain; if the method
+                            # is found in a base class, retarget the repair to that base-class file
+                            # so the fix is applied where the code actually lives.
+                            resolved = utils.resolve_inherited_test_method(
+                                info["method_name"], test_class_short_name, test_class_content, project_dir, module)
+                            if resolved is not None:
+                                base_path, base_content, base_code = resolved
+                                relative_file_path = base_path.split(project_dir + "/")[-1]
+                                utils.git_checkout_file(project_dir, relative_file_path)
+                                file_path = base_path
+                                test_class_content = base_content
+                                info["relative_file_path"] = relative_file_path
+                                info["file_path"] = base_path
+                                info["test_class_content"][0] = base_content
+                                info["imports"] = utils.get_imports(base_content)
+                                info["test_method_content"] = base_code
                         if "/src/" in file_path:
                             root_path = file_path.split("/src/")[0]
                             pom_path = os.path.join(root_path,"pom.xml")

@@ -111,6 +111,20 @@ def parse_patch_gpt(response, test_method_name, test_class_content):
             method_code = method[3]
             if method_name == test_method_name:
                 patch["test_code"] = (method_code)
+    if patch["test_code"] is None:
+        # Fallback: extract_java_code's brace-counting drops the method when the model
+        # writes a multi-line signature (the method name on one line and "...) {" on the
+        # next) or wraps the fix in a ```java fence, leaving a nameless method that javalang
+        # rejects -> test_code stays None and a valid fix is discarded. Pull the
+        # //<fix start>..//<fix end> region (fences stripped) and locate the method by name
+        # with the parser-independent text extractor.
+        region = response
+        if "//<fix start>" in region and "//<fix end>" in region:
+            region = region.split("//<fix start>", 1)[1].split("//<fix end>", 1)[0]
+        region = region.replace("```java", "").replace("```", "")
+        code = utils._extract_method_text(test_method_name, region)
+        if code is not None:
+            patch["test_code"] = code
     return patch,ifstitched
 
 def parse_patch_magiccoder(full_response, test_method_name, test_class_content):
