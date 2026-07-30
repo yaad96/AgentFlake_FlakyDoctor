@@ -159,6 +159,98 @@ def extract_method(test_name,class_content):
             res = [method_code,node, node.modifiers, node.name, node.parameters, node.return_type, node.throws]
     return res
 
+def _mask_java(s):
+    """Return a same-length copy of Java source with the contents of string/char
+    literals and comments blanked out (newlines preserved). Lets a brace/paren scan
+    and a method-name search run without being fooled by braces, parens, or the
+    method name appearing inside a string or comment. Indices map 1:1 to the input."""
+    out = []
+    i, n = 0, len(s)
+    NORMAL, LINE, BLOCK, STR, CHAR = 0, 1, 2, 3, 4
+    state = NORMAL
+    while i < n:
+        c = s[i]
+        nxt = s[i + 1] if i + 1 < n else ""
+        if state == NORMAL:
+            if c == "/" and nxt == "/":
+                state = LINE; out.append("  "); i += 2; continue
+            if c == "/" and nxt == "*":
+                state = BLOCK; out.append("  "); i += 2; continue
+            if c == '"':
+                state = STR; out.append(" "); i += 1; continue
+            if c == "'":
+                state = CHAR; out.append(" "); i += 1; continue
+            out.append(c); i += 1; continue
+        if state == LINE:
+            out.append("\n" if c == "\n" else " ")
+            if c == "\n":
+                state = NORMAL
+            i += 1; continue
+        if state == BLOCK:
+            if c == "*" and nxt == "/":
+                state = NORMAL; out.append("  "); i += 2; continue
+            out.append("\n" if c == "\n" else " "); i += 1; continue
+        # STR or CHAR
+        if c == "\\":
+            out.append("  "); i += 2; continue
+        if (state == STR and c == '"') or (state == CHAR and c == "'"):
+            state = NORMAL; out.append(" "); i += 1; continue
+        out.append("\n" if c == "\n" else " "); i += 1; continue
+    return "".join(out)
+
+
+def _extract_method_text(test_name, class_content):
+    """Parser-independent fallback for get_test_method: locate the method named
+    `test_name` by text and return its exact source span (whole signature line
+    through the whole closing-brace line, matching get_string's convention) via
+    brace matching. Returns None if the file has no such method definition. This
+    recovers methods javalang can't reach because it failed to parse the file
+    (e.g. Java-8 type-use annotations like Box<@From(..) Integer> or Foo @Size(..)[])."""
+    masked = _mask_java(class_content)
+    pattern = re.compile(r"(?<![A-Za-z0-9_$.])" + re.escape(test_name) + r"\s*\(")
+    result = None
+    for m in pattern.finditer(masked):
+        # match the parameter parens
+        p = masked.find("(", m.start())
+        depth, i = 0, p
+        while i < len(masked):
+            ch = masked[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        if i >= len(masked):
+            continue
+        # the next significant char must open a body ('{'); ';' => abstract decl or a call
+        j = i + 1
+        while j < len(masked) and masked[j] not in "{;":
+            j += 1
+        if j >= len(masked) or masked[j] == ";":
+            continue
+        # brace-match the body
+        depth, k = 0, j
+        while k < len(masked):
+            ch = masked[k]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    break
+            k += 1
+        if k >= len(masked):
+            continue
+        # expand to full lines: start of the signature line .. end of the closing-brace line
+        line_start = class_content.rfind("\n", 0, m.start()) + 1
+        nl = class_content.find("\n", k)
+        line_end = len(class_content) if nl == -1 else nl + 1
+        result = class_content[line_start:line_end]  # keep last match (mirrors get_test_method)
+    return result
+
+
 def get_test_method(test_name,class_content):
     method_list = parse_java_func_intervals(class_content)
     res = None
@@ -171,7 +263,76 @@ def get_test_method(test_name,class_content):
             #             continue
             # res = [start,end,method_name,method_code,node.annotations]
             res = method_code
+    if res is None:
+        # javalang either could not parse the file (JavaSyntaxError -> empty method
+        # list) or found no match; recover the method by text so a parser limitation
+        # doesn't turn into method_code_location_failure.
+        res = _extract_method_text(test_name, class_content)
     return res
+
+
+def _super_class_name(class_content, class_name=None):
+    """Return the immediate superclass simple name for `class_name` (or the first
+    class if not given), or None. Uses masked source so `extends` in a comment/string
+    or a `<T extends Bound>` type parameter isn't mistaken for the superclass."""
+    masked = _mask_java(class_content)
+    name = re.escape(class_name) if class_name else r"\w+"
+    m = re.search(r"\bclass\s+" + name + r"\b\s*(?:<[^{}]*?>)?\s+extends\s+([\w.]+)", masked)
+    return m.group(1).split(".")[-1] if m else None
+
+
+def _find_class_file(project_dir, simple_name, module=None):
+    """Locate <simple_name>.java under project_dir (skipping build output dirs),
+    preferring the given module then test/main sources. Returns a path or None."""
+    target = simple_name + ".java"
+    candidates = []
+    for root, _dirs, files in os.walk(project_dir):
+        if target in files:
+            fp = os.path.join(root, target)
+            if "/target/" in fp or "/build/" in fp or "/bin/" in fp:
+                continue
+            candidates.append(fp)
+    if not candidates:
+        return None
+
+    def rank(fp):
+        s = 0
+        if module and module in fp:
+            s += 4
+        if "/src/test/" in fp:
+            s += 2
+        elif "/src/main/" in fp:
+            s += 1
+        return -s  # best (highest) first
+
+    candidates.sort(key=rank)
+    return candidates[0]
+
+
+def resolve_inherited_test_method(method_name, class_simple_name, class_content, project_dir, module=None):
+    """When a test method isn't defined in its own class file, follow the `extends`
+    chain and search base-class files for it. Returns (file_path, class_content,
+    method_code) for the base class that actually defines the method, or None. The
+    caller retargets the repair to that file so the fix lands where the code lives."""
+    visited = set()
+    content = class_content
+    cur_name = class_simple_name
+    for _ in range(20):  # guard against cycles / pathological hierarchies
+        sup = _super_class_name(content, cur_name)
+        if not sup or sup in visited:
+            return None
+        visited.add(sup)
+        base_path = _find_class_file(project_dir, sup, module)
+        if not base_path:
+            return None
+        base_content = read_file(base_path)
+        code = get_test_method(method_name, base_content)
+        if code is not None:
+            return (base_path, base_content, code)
+        content = base_content
+        cur_name = sup
+    return None
+
 
 def write_dict_csv(csv_path, fields, dict_data):
     with open(csv_path, 'a') as csvfile:
