@@ -12,8 +12,8 @@ curDir=$(pwd)
 ## passes the first run and fails the second, so the wrapper test fails. Stock Surefire is
 ## enough — no testorder fork is needed (unlike OD).
 run_test(){
-    echo mvn test -pl ${module} -Dtest=${wrapperTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip
-    mvn test -pl ${module} -Dtest=${wrapperTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip
+    echo mvn test -pl ${module} -Dtest=${wrapperTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true
+    mvn test -pl ${module} -Dtest=${wrapperTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true
 }
 
 echo "* RUNNING NIO wrapper ${wrapperTest} STARTING at $(date)"

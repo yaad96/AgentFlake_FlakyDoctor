@@ -47,7 +47,9 @@ import run_af_fd as rf  # reuse stage_container/build_project/maven_env/ensure_g
 NIO_RUN_FLAGS = (
     "-Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip "
     "-Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip "
-    "-Dmaven.antrun.skip -Dspotless.check.skip"
+    # -Ddisable.checks=true: Spring Boot gates checkstyle on this property (validate
+    # phase), which stock -Dcheckstyle.skip does not turn off; harmless elsewhere.
+    "-Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true"
 ).split()
 
 

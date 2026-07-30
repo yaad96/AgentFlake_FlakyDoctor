@@ -42,10 +42,13 @@ MVN_SKIP_FLAGS = (
     # -Dskip.web.build=true skips graylog2-server's node/yarn web-UI build (its
     # web-interface-build profile is active unless this property is set); harmless
     # (unused) for every other project.
+    # -Ddisable.checks=true is Spring Boot's own gate: its poms wire checkstyle as
+    # <skip>${disable.checks}</skip> (bound to the validate phase), so the generic
+    # -Dcheckstyle.skip does NOT turn it off; harmless (unused) for other projects.
     "-DskipTests -Dfindbugs.skip=true -Dgpg.skip -Drat.skip -Dcheckstyle.skip "
     "-Denforcer.skip=true -Dspotbugs.skip -Djacoco.skip -Danimal.sniffer.skip "
     "-Dmaven.antrun.skip -Dlicense.skip -Dmaven.javadoc.skip=true -Dskip.web.build=true "
-    "-DskipDockerBuild -Ddependency-check.skip -Dspotless.check.skip"
+    "-DskipDockerBuild -Ddependency-check.skip -Dspotless.check.skip -Ddisable.checks=true"
 ).split()
 
 # hbase-common (and similar) GENERATE required sources (e.g. Version.java) with an
@@ -410,6 +413,17 @@ def maven_env(container_dir, jdk):
         # so it overrides the image's default /root/.m2 repo.local.
         env["MAVEN_ARGS"] = f"-Dmaven.repo.local={staged_m2}"
         env["MAVEN_OPTS"] = f"-Dmaven.repo.local={staged_m2}"
+    else:
+        # No staged offline repo shipped for this container. Still steer Maven away
+        # from the image's default /root/.m2, which is not writable when the
+        # container runs as a non-root user — Maven then dies with "Could not create
+        # local repository at /root/.m2/repository" before any build work. Pin
+        # repo.local to a writable path under the (bind-mounted, writable) container
+        # dir; Maven creates and populates it via online resolution.
+        fallback_m2 = os.path.join(os.path.abspath(container_dir), "Flakym2", ".m2", "repository")
+        os.makedirs(fallback_m2, exist_ok=True)
+        env["MAVEN_ARGS"] = f"-Dmaven.repo.local={fallback_m2}"
+        env["MAVEN_OPTS"] = f"-Dmaven.repo.local={fallback_m2}"
     # -Dskip.web.build=true via MAVEN_OPTS so it also reaches FlakyDoctor's stock
     # run_nondex.sh (it inherits this env) — deactivates graylog's yarn web build
     # at the verification step too, without modifying FlakyDoctor.

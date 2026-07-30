@@ -228,8 +228,16 @@ def parse_err_msg(output, test, test_class, test_class_content):
         if lineno != None and lineno not in lineno_list:
             lineno_list.append(lineno)
 
+    test_class_lines = test_class_content.split("\n")
     for number in lineno_list:
-        err_code = test_class_content.split("\n")[int(number)-1]
+        idx = int(number) - 1
+        # The line number comes from the stack trace, which may point into a
+        # different file (a base class, a helper, or the code under test), so it can
+        # exceed this test file's length. Guard the index instead of crashing with
+        # IndexError (which aborts the whole repair before the LLM is ever called).
+        if idx < 0 or idx >= len(test_class_lines):
+            continue
+        err_code = test_class_lines[idx]
         if err_code.strip() not in err_code_list:
             err_code_list.append(err_code.strip())
 
@@ -287,8 +295,16 @@ def parse_compilation_err(output, test_class, test_class_content):
                 pass
         if lineno != None and lineno not in lineno_list:
             lineno_list.append(lineno)
+    test_class_lines = test_class_content.split("\n")
     for number in lineno_list:
-        err_code = test_class_content.split("\n")[int(number)-1]
+        idx = int(number) - 1
+        # The line number comes from the stack trace, which may point into a
+        # different file (a base class, a helper, or the code under test), so it can
+        # exceed this test file's length. Guard the index instead of crashing with
+        # IndexError (which aborts the whole repair before the LLM is ever called).
+        if idx < 0 or idx >= len(test_class_lines):
+            continue
+        err_code = test_class_lines[idx]
         if err_code.strip() not in err_code_list:
             err_code_list.append(err_code.strip())
         
