@@ -40,10 +40,15 @@ python3 src/run_af_fd_id.py --list     # ID rows
 cd FlakyDoctor
 # OD
 python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
+```
+Run data for this test can be found in `FlakyDoctor_Data.zip/OD/ormlitecore59309e5`
 
+```
 # ID
 python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
 ```
+
+Run data for this test can be found in `FlakyDoctor_Data.zip/ID/apollojavaapolloopenapi5344bc4testFindItemsByNamespace`
 
 ## Options
 | Option / env | Purpose |
@@ -72,3 +77,5 @@ FlakyDoctor/data/<container>/run_<NN>/
 Verdict is `PASSED` or `FAILED`. Summaries are written to
 `FlakyDoctor/data/<container>/summary.csv` and all the runs' summaries are written in
 `FlakyDoctor/data/Complete_Containers_Summary.csv`.
+
+All 41 OD test and 41 ID test data are available inside the zip folder `FlakyDoctor_Data.zip`. 
