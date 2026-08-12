@@ -36,35 +36,28 @@ python3 src/run_af_fd_id.py --list     # ID rows
 ```
 
 ### Examples
-
 ```bash
 cd FlakyDoctor
 # OD
 python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
 
 # ID
-cd FlakyDoctor
 python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
-
-
+```
 
 ## Options
-
 | Option / env | Purpose |
 |---|---|
 | `--runs N` | Independent repair runs for pass@k. |
 | `--models claude,opus,haiku` | One or more Claude models (aliases in `runner/config.py`). |
 
-
 Model aliases:
-
 | Alias | Model |
 |---|---|
 | `claude`, `sonnet` | `claude-sonnet-4-6` |
 | `opus` | `claude-opus-4-7` |
 | `haiku` | `claude-haiku-4-5-20251001` |
 
-```
 Each run is archived under:
 
 ```
