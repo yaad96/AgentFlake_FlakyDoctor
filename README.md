@@ -13,7 +13,7 @@ repairs it with the original FlakyDoctor pipeline.
 - Works on **Linux and macOS**. The host only needs `bash`, `python3`, and
   `docker`; the JDK/Maven toolchain lives in the image.
 
-## setup
+## Setup
 
 From the repo root, create a file ".anthropic_api_key" and store your api key there. During the run, the key needed will be accessed from there. It is git-ignored, so its safe. 
 
@@ -64,11 +64,10 @@ Model aliases:
 | `opus` | `claude-opus-4-7` |
 | `haiku` | `claude-haiku-4-5-20251001` |
 
-## Output
-
+```
 Each run is archived under:
 
-```text
+```
 FlakyDoctor/data/<container>/run_<NN>/
   pipeline.log            # full container stdout
   meta.json               # verdict, model, timing
@@ -77,6 +76,6 @@ FlakyDoctor/data/<container>/run_<NN>/
   .run_complete
 ```
 
-Verdict is `PASSED` (a round reached `test_pass`), `FAILED`, or `INCOMPLETE`. Summaries are written to
-`FlakyDoctor/data/<container>/summary.csv` and
+Verdict is `PASSED` or `FAILED`. Summaries are written to
+`FlakyDoctor/data/<container>/summary.csv` and all the runs' summaries are written in
 `FlakyDoctor/data/Complete_Containers_Summary.csv`.
