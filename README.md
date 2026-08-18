@@ -84,7 +84,7 @@ python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
 
 | Option / env var | Purpose |
 |---|---|
-| `--runs N` | Independent runs for pass@k. |
+| `--runs N` | Independent runs for pass@k, which counts a test as repaired if at least one of the N independently sampled runs yields a verified fix. |
 | `--models claude,opus,haiku` | One or more Claude models. |
 | `--reproduce-only` | Reproduce the flake without repairing it. No API key needed. |
 
