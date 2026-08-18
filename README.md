@@ -1,81 +1,114 @@
-# FlakyDoctor — AgentFlake Version
+# FlakyDoctor (AgentFlake Version)
 
 FlakyDoctor repairs Implementation-Dependent (ID) and Order-Dependent (OD) flaky
-Java tests with a neuro-symbolic loop. This version adds a **Claude** (Anthropic)
-backend and a containerized runner that reproduces a flake inside Docker and
-repairs it with the original FlakyDoctor pipeline.
-
+Java tests with a neuro-symbolic loop. This version adds a Claude (Anthropic)
+backend and a containerized runner that reproduces a flake inside Docker, repairs
+it with the original FlakyDoctor pipeline, and archives the full run under
+`FlakyDoctor/data/<test>/run_<NN>/`.
 
 ## Requirements
 
 - Docker installed and running (all builds and tests happen inside the container).
-- An Anthropic API key — only for repair; `--reproduce-only` needs none.
-- Works on **Linux and macOS**. The host only needs `bash`, `python3`, and
-  `docker`; the JDK/Maven toolchain lives in the image.
+- An Anthropic API key. Only repair needs one; `--reproduce-only` does not.
+- Linux and macOS are supported. The host needs `bash`, `python3`, and `docker`;
+  the JDK/Maven toolchain lives in the image.
 
 ## Setup
 
-From the repo root, create a file ".anthropic_api_key" and store your api key there. During the run, the key needed will be accessed from there. It is git-ignored, so its safe. 
+From the repo root, create a file `.anthropic_api_key` and store your API key
+there. The key is read from that file during a run. The file is git-ignored, so
+it is safe.
 
-
-## Run a container (ID or OD)
+## Basic Run
 
 The runner auto-detects the test type from `test_config.csv`, so the same command
-handles both ID and OD — just pass the `result_container` name:
+handles both ID and OD. Pass the test name from the `result_container` column:
 
 ```bash
 cd FlakyDoctor
-python3 runner/run_claude.py <container> --runs 1 --models claude
+python3 runner/run_claude.py <test> --runs 1 --models claude
 ```
 
-List the runnable containers:
+List the runnable tests:
 
 ```bash
 python3 src/run_af_fd.py --list        # OD rows
 python3 src/run_af_fd_id.py --list     # ID rows
 ```
 
-### Examples
-```bash
-cd FlakyDoctor
-# OD
-python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
-```
-Run data for this test can be found in `FlakyDoctor_Data.zip/OD/ormlitecore59309e5`
+## Model Aliases
 
-```
-# ID
-python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
-```
+Aliases are defined in `runner/config.py`.
 
-Run data for this test can be found in `FlakyDoctor_Data.zip/ID/apollojavaapolloopenapi5344bc4testFindItemsByNamespace`
-
-## Options
-| Option / env | Purpose |
-|---|---|
-| `--runs N` | Independent repair runs for pass@k. |
-| `--models claude,opus,haiku` | One or more Claude models (aliases in `runner/config.py`). |
-
-Model aliases:
 | Alias | Model |
 |---|---|
 | `claude`, `sonnet` | `claude-sonnet-4-6` |
 | `opus` | `claude-opus-4-7` |
 | `haiku` | `claude-haiku-4-5-20251001` |
 
+## Examples
+
+### ID
+
+```bash
+cd FlakyDoctor
+python3 runner/run_claude.py \
+  apollojavaapolloopenapi5344bc4testFindItemsByNamespace \
+  --runs 1 --models claude
+```
+
+Run data for this test is in
+`FlakyDoctor_Data.zip/ID/apollojavaapolloopenapi5344bc4testFindItemsByNamespace`.
+
+### OD
+
+```bash
+cd FlakyDoctor
+python3 runner/run_claude.py \
+  ormlitecore59309e5 \
+  --runs 1 --models claude
+```
+
+Run data for this test is in `FlakyDoctor_Data.zip/OD/ormlitecore59309e5`.
+
+### Run both sequentially
+
+```bash
+cd /path/to/FlakyDoctor
+
+python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
+python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
+```
+
+## Options
+
+| Option / env var | Purpose |
+|---|---|
+| `--runs N` | Independent runs for pass@k. |
+| `--models claude,opus,haiku` | One or more Claude models. |
+| `--reproduce-only` | Reproduce the flake without repairing it. No API key needed. |
+
+## Output
+
 Each run is archived under:
 
-```
-FlakyDoctor/data/<container>/run_<NN>/
-  pipeline.log            # full container stdout
-  meta.json               # verdict, model, timing
+```text
+FlakyDoctor/data/<test>/run_<NN>/
   flakydoctor_output/     # FlakyDoctor results.csv / results.json / patches
     semantic_diff.diff    # the LLM's change per round (passing + failing), clean diff
+  meta.json               # verdict, model, timing
+  pipeline.log            # full container stdout
   .run_complete
 ```
 
-Verdict is `PASSED` or `FAILED`. Summaries are written to
-`FlakyDoctor/data/<container>/summary.csv` and all the runs' summaries are written in
-`FlakyDoctor/data/Complete_Containers_Summary.csv`.
+The verdict in `meta.json` is `PASSED` or `FAILED`.
 
-All 41 OD test and 41 ID test data are available inside the zip folder `FlakyDoctor_Data.zip`. 
+Summaries are written to:
+
+```text
+FlakyDoctor/data/<test>/summary.csv
+FlakyDoctor/data/Complete_Containers_Summary.csv
+```
+
+All run data is available in `FlakyDoctor_Data.zip`, covering 41 OD tests and 41
+ID tests.
