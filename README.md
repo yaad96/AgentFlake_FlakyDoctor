@@ -71,14 +71,6 @@ python3 runner/run_claude.py \
 
 Run data for this test is in `FlakyDoctor_Data.zip/OD/ormlitecore59309e5`.
 
-### Run both sequentially
-
-```bash
-cd /path/to/FlakyDoctor
-
-python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
-python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
-```
 
 ## Options
 
