@@ -1,4 +1,4 @@
-# FlakyDoctor (AgentFlake Version)
+# FlakyDoctor (AgentFlake Version: with NIO and TD)
 
 FlakyDoctor repairs ID, OD, NIO and TD flaky
 Java tests with a neuro-symbolic loop. This version adds a Claude (Anthropic)
