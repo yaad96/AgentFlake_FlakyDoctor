@@ -1,99 +1,37 @@
-# FlakyDoctor — AgentFlake Version
+# FlakyDoctor (AgentFlake Version)
 
-FlakyDoctor repairs Implementation-Dependent (ID), Order-Dependent (OD),
-Non-Idempotent-Outcome (NIO), and Test/Timing-Dependent (TD) flaky Java tests with a
-neuro-symbolic loop. This version adds a **Claude** (Anthropic) backend and a
-containerized runner that reproduces a flake inside Docker and repairs it with
-the original FlakyDoctor pipeline.
-
+FlakyDoctor repairs ID, OD, NIO and TD flaky
+Java tests with a neuro-symbolic loop. This version adds a Claude (Anthropic)
+backend and a containerized runner that reproduces a flake inside Docker, repairs
+it with the original FlakyDoctor pipeline, and archives the full run under
+`FlakyDoctor/data/<test>/run_<NN>/`.
 
 ## Requirements
 
 - Docker installed and running (all builds and tests happen inside the container).
-- An Anthropic API key — only for repair; `--reproduce-only` needs none.
-- Works on **Linux and macOS**. The host only needs `bash`, `python3`, and
-  `docker`; the JDK/Maven toolchain lives in the image.
+- An Anthropic API key.
+- Linux and macOS are supported. The host needs `bash`, `python3`, and `docker`;
+  the JDK/Maven toolchain lives in the image.
 
 ## Setup
 
-One command, from the repo root:
+From the repo root, create a file `.anthropic_api_key` and store your API key
+there. The key is read from that file during a run. The file is git-ignored, so
+it is safe.
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-... bash FlakyDoctor/setup.sh --build-images
-```
+## Basic Run
 
-This checks Docker, stores the key in `FlakyDoctor/.anthropic_api_key` (git-ignored),
-and prebuilds the OD/ID/NIO/TD images. Omit `--build-images` to build each image on
-first use; add `--force-rebuild-images` to rebuild existing ones.
-
-To place the key by hand instead, write it to **`FlakyDoctor/.anthropic_api_key`** —
-not the repo root. The `ANTHROPIC_API_KEY` environment variable always overrides the
-key file.
-
-## Run a container (ID, OD, NIO, or TD)
-
-The runner reads the `test_type` column of `test_config.csv` and dispatches to the
-right repair pipeline, so the same command handles all four types — just pass the
-`result_container` name. Run everything below from the `FlakyDoctor/` directory:
+The runner auto-detects the test type from `test_config.csv`, so the same command
+handles all the mentioned flakiness types. Pass the test name from the `result_container` column:
 
 ```bash
 cd FlakyDoctor
-python3 runner/run_claude.py <container> --runs 1 --models claude
+python3 runner/run_claude.py <test> --runs 1 --models claude
 ```
 
-List the runnable containers:
+## Model Aliases
 
-```bash
-python3 src/run_af_fd.py --list        # OD rows  (125)
-python3 src/run_af_fd_id.py --list     # ID rows  (819)
-python3 src/run_af_fd_nio.py --list    # NIO rows (125)
-python3 src/run_af_fd_td.py --list     # TD rows  (36)
-```
-
-### Examples
-
-```bash
-# OD
-python3 runner/run_claude.py ormlitecore59309e5 --runs 1 --models claude
-
-# ID
-python3 runner/run_claude.py apollojavaapolloopenapi5344bc4testFindItemsByNamespace --runs 1 --models claude
-
-# NIO
-python3 runner/run_claude.py quickcheckc1c1 --runs 1 --models claude
-
-# TD
-python3 runner/run_claude.py BOOKKEEPER-846 --runs 1 --models claude
-```
-
-### How the types differ
-
-All four share the same staging, build, and repair machinery; they differ only in how
-the flake is deterministically reproduced before any API tokens are spent. Every driver
-gates on that reproduction failing first.
-
-| Type | `polluter/state setter` | Reproduction oracle |
-|---|---|---|
-| OD | always set (all 125 rows) | runs the polluter/state-setter before the victim, under a testorder fork |
-| ID | empty | `mvn nondex -DnondexSeed=<seed>` from the CSV; gated on ≥1 NonDex iteration failing |
-| NIO | empty | a generated JUnit wrapper invokes the victim **twice in one JVM**; the 2nd invocation must fail |
-| TD | empty | the staged `FlakyCodeChange.patch` timing forcing is applied on top of the tree; the plain victim must then fail |
-
-NIO and TD need no polluter and no NonDex seed. A NIO test passes the first time but
-fails on re-invocation in the same JVM because it leaves shared state behind; a TD test
-passes alone but breaks once an injected timing perturbation invalidates its
-concurrency/timing assumption. In both cases the victim test method is the only repair
-target.
-
-## Options
-
-| Option / env | Purpose |
-|---|---|
-| `--runs N` | Independent repair runs for pass@k. |
-| `--models claude,opus,haiku` | One or more Claude models (aliases in `runner/config.py`). |
-| `--reproduce-only` | Reproduce the flake and stop; no repair, so no API key needed. |
-
-Model aliases:
+Aliases are defined in `runner/config.py`.
 
 | Alias | Model |
 |---|---|
@@ -101,19 +39,84 @@ Model aliases:
 | `opus` | `claude-opus-4-7` |
 | `haiku` | `claude-haiku-4-5-20251001` |
 
+## Examples
+
+### ID
+
+```bash
+cd FlakyDoctor
+python3 runner/run_claude.py \
+  apollojavaapolloopenapi5344bc4testFindItemsByNamespace \
+  --runs 1 --models claude
+```
+
+Run data for this test is in
+`FlakyDoctor_Data.zip/ID/apollojavaapolloopenapi5344bc4testFindItemsByNamespace`.
+
+### OD
+
+```bash
+cd FlakyDoctor
+python3 runner/run_claude.py \
+  ormlitecore59309e5 \
+  --runs 1 --models claude
+```
+
+Run data for this test is in `FlakyDoctor_Data.zip/OD/ormlitecore59309e5`.
+
+### NIO
+
+```bash
+cd FlakyDoctor
+python3 runner/run_claude.py \
+  quickcheckc1c1 \
+  --runs 1 --models claude
+```
+
+Run data for this test is in `FlakyDoctor_Data.zip/NIO/quickcheckc1c1`.
+
+### TD
+
+```bash
+cd FlakyDoctor
+python3 runner/run_claude.py \
+  BOOKKEEPER-846 \
+  --runs 1 --models claude
+```
+
+Run data for this test is in `FlakyDoctor_Data.zip/TD/BOOKKEEPER-846`.
+
+
+
+## Options
+
+| Option / env var | Purpose |
+|---|---|
+| `--runs N` | Independent runs for pass@k, which counts a test as repaired if at least one of the N independently sampled runs yields a verified fix. |
+| `--models claude,opus,haiku` | One or more Claude models. |
+| `--reproduce-only` | Reproduce the flake without repairing it. No API key needed. |
+
 ## Output
 
 Each run is archived under:
 
 ```text
-FlakyDoctor/data/<container>/run_<NN>/
-  pipeline.log            # full container stdout
-  meta.json               # verdict, model, timing
+FlakyDoctor/data/<test>/run_<NN>/
   flakydoctor_output/     # FlakyDoctor results.csv / results.json / patches
     semantic_diff.diff    # the LLM's change per round (passing + failing), clean diff
+  meta.json               # verdict, model, timing
+  pipeline.log            # full container stdout
   .run_complete
 ```
 
-Verdict is `PASSED` (a round reached `test_pass`), `FAILED`, or `INCOMPLETE`. Summaries are written to
-`FlakyDoctor/data/<container>/summary.csv` and
-`FlakyDoctor/data/Complete_Containers_Summary.csv`.
+The verdict in `meta.json` is `PASSED` or `FAILED`.
+
+Summaries are written to:
+
+```text
+FlakyDoctor/data/<test>/summary.csv
+FlakyDoctor/data/Complete_Containers_Summary.csv
+```
+
+All run data is available in `FlakyDoctor_Data.zip`, covering 41 OD tests and 41
+ID tests.
