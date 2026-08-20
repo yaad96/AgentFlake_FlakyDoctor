@@ -9,7 +9,7 @@ it with the original FlakyDoctor pipeline, and archives the full run under
 ## Requirements
 
 - Docker installed and running (all builds and tests happen inside the container).
-- An Anthropic API key. Only repair needs one; `--reproduce-only` does not.
+- An Anthropic API key. 
 - Linux and macOS are supported. The host needs `bash`, `python3`, and `docker`;
   the JDK/Maven toolchain lives in the image.
 
@@ -27,13 +27,6 @@ handles both ID and OD. Pass the test name from the `result_container` column:
 ```bash
 cd FlakyDoctor
 python3 runner/run_claude.py <test> --runs 1 --models claude
-```
-
-List the runnable tests:
-
-```bash
-python3 src/run_af_fd.py --list        # OD rows
-python3 src/run_af_fd_id.py --list     # ID rows
 ```
 
 ## Model Aliases
