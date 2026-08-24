@@ -346,18 +346,17 @@ def run_test_with_nondex(project_dir, module, test_fullname, jdk, nondex_times):
     return output
 
 def analyze_nio_test_result(output):
-    # The NIO wrapper is a single JUnit test (runTwice) that runs the victim twice in one
-    # JVM. It reports one "Tests run: 1" Surefire line, so the pass/fail parsing is identical
-    # to the single-test NonDex case above.
+    # The NIO wrapper is normally a single JUnit test (runTwice), but some projects add
+    # listener/mechanism errors around generated tests (e.g. HBase's class rule checker),
+    # so accept any Surefire totals line and classify by failures+errors.
     all_test_results = []
-    output_list = output.split("\n")
-    for line in output_list:
-        if "Tests run: 1, Failures: 0, Errors: 0, Skipped: 0" in line:
-            all_test_results.append("test_pass")
-        elif "Tests run: 1, Failures: 1, Errors: 0, Skipped: 0" in line:
-            all_test_results.append("test_failure")
-        elif "Tests run: 1, Failures: 0, Errors: 1, Skipped: 0" in line:
-            all_test_results.append("test_failure")
+    for line in output.split("\n"):
+        m = re.search(r"Tests run: \d+, Failures: (\d+), Errors: (\d+)", line)
+        if m:
+            if int(m.group(1)) + int(m.group(2)) == 0:
+                all_test_results.append("test_pass")
+            else:
+                all_test_results.append("test_failure")
     if len(all_test_results) == 0:
         if "COMPILATION ERROR" in output:
             return "compilation_error"

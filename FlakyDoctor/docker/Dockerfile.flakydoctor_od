@@ -25,9 +25,23 @@ WORKDIR /app
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         autoconf automake libtool curl make g++ unzip patch \
-        python3 python3-pip git xmlstarlet && \
+        python3 python3-pip git xmlstarlet wget libnss-wrapper && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
+
+# Hadoop 3.3.0-era builds call `protoc --version` from hadoop-maven-plugins
+# and expect protobuf/protoc 2.5.0. Keep this opt-in so non-Hadoop images stay
+# as small and fast to build as before.
+ARG WITH_PROTOBUF=false
+RUN if [ "$WITH_PROTOBUF" = "true" ]; then \
+        wget https://github.com/protocolbuffers/protobuf/releases/download/v2.5.0/protobuf-2.5.0.tar.gz && \
+        tar -xzf protobuf-2.5.0.tar.gz && \
+        cd protobuf-2.5.0 && \
+        ./configure && make && make install && ldconfig && \
+        cd .. && rm -rf protobuf-2.5.0 protobuf-2.5.0.tar.gz ; \
+    else \
+        echo "WITH_PROTOBUF=$WITH_PROTOBUF — skipping protobuf/protoc 2.5.0" ; \
+    fi
 
 # Build + install the Illinois testorder Surefire as a Maven core extension.
 # This is the capability that orders methods *within a class*, so same-class OD

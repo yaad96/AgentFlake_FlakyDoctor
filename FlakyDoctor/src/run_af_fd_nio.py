@@ -148,11 +148,19 @@ def write_nio_wrapper(project_dir, module, victim):
 # --------------------------------------------------------- reproduce (wrapper)
 
 def nio_test_result(output):
-    """Mirror repair_NIO/analyze_nio_test_result for the single-test wrapper totals line."""
-    if re.search(r"Tests run: 1, Failures: 0, Errors: 0, Skipped: 0", output):
-        return "test_pass"
-    if re.search(r"Tests run: 1, (Failures: 1, Errors: 0|Failures: 0, Errors: 1), Skipped: 0", output):
-        return "test_failure"
+    """Mirror repair_NIO/analyze_nio_test_result for wrapper Surefire totals.
+
+    Some projects, notably HBase, add listener/mechanism errors around the generated wrapper,
+    so the totals can be "Tests run: 2" even though the wrapper's runTwice failure is the
+    desired NIO reproduction signal.
+    """
+    results = []
+    for line in output.splitlines():
+        m = re.search(r"Tests run: \d+, Failures: (\d+), Errors: (\d+)", line)
+        if m:
+            results.append("test_pass" if int(m.group(1)) + int(m.group(2)) == 0 else "test_failure")
+    if results:
+        return "test_pass" if "test_failure" not in results else "test_failure"
     if "COMPILATION ERROR" in output:
         return "compilation_error"
     return "build_failure"
