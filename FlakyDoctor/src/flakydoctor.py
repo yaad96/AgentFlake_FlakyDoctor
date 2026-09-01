@@ -18,9 +18,9 @@ def parse_args():
     parser.add_argument("--projects", dest = "projects", required = True,
                         help = "A directory path where you save all the Java projects.")
     parser.add_argument("--api-key", "--openai-key", dest = "openai_key", required = True,
-                        help = "API key for the selected model (Anthropic key for Claude, OpenAI key for GPT-4). --openai-key is kept as a deprecated alias.")
+                        help = "API key for the selected model (Anthropic key for Claude, OpenAI key for GPT/OpenAI). --openai-key is kept as a deprecated alias.")
     parser.add_argument("--model", dest = "model", required = True,
-                        help = "LLM model to run, currently we support [GPT-4, MagiCoder, Claude].")
+                        help = "LLM model to run, currently we support [OpenAI, GPT-4, MagiCoder, Claude].")
     parser.add_argument("--nondex-times", dest = "nondex_times", required = False, default = 3,
                         help = "How many times you want to nondex to rerun.")
     parser.add_argument("--output-dir", dest = "output_dir", required = True,

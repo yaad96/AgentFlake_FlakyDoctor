@@ -10,7 +10,7 @@ import re
 import time
 import update_pom
 # torch/transformers are only needed for local HuggingFace models (MagicCoder/CodeLlama/StarCoder);
-# imported lazily inside the model-loading branches so GPT-4/Claude runs do not require them.
+# imported lazily inside the model-loading branches so OpenAI/Claude runs do not require them.
 from bs4 import BeautifulSoup
 from pathlib import Path
 import json
@@ -40,8 +40,8 @@ def main(pr_csv, clone_dir, test_file_info, model, nondex_times,result_csv,resul
         from transformers import AutoModelForCausalLM, AutoTokenizer
         loading_model = AutoModelForCausalLM.from_pretrained(load_path[model], device_map="auto", cache_dir='./huggingface', offload_folder = './huggingface')
         tokenizer = AutoTokenizer.from_pretrained(load_path[model], cache_dir='./huggingface')
-    elif model == "GPT-4":
-        loading_model = "GPT-4"
+    elif model in ["OpenAI", "GPT-4"]:
+        loading_model = model
         tokenizer = None
     elif model == "Claude":
         loading_model = "Claude"
@@ -562,7 +562,7 @@ def generate_prompts(model, victim_name, polluter_name, test_type, \
     But if you didn't find above similar cases, you should fix by other ways, to make sure the test will always pass.
     """
 
-    if model in ["GPT-4", "Claude"]:
+    if model in ["OpenAI", "GPT-4", "Claude"]:
 
         gpt_prompt ="""You are a software testing expert. 
             I want you to fix a flaky test. \n{}\n
@@ -599,7 +599,7 @@ def generate_prompts(model, victim_name, polluter_name, test_type, \
             response = full_response.content[0].text
         else:
             full_response = openai.ChatCompletion.create(
-                model = "gpt-4", #"gpt-3.5-turbo",
+                model = os.environ.get("FD_OPENAI_MODEL") or "gpt-5.4",
                 temperature = 0.2,
                 messages = [
                     {"role": "user",
@@ -797,7 +797,7 @@ def repair_OD_tests(test_info, model,result_csv,result_json,save_dir, idx, loadi
 
             print(victim_helper_methods, polluter_helper_methods,victim_global_vars, polluter_global_vars )
             # exit(0)
-            if model in ["GPT-4", "Claude"]:
+            if model in ["OpenAI", "GPT-4", "Claude"]:
                 try:
                     response, prompt = "", ""
                     response, prompt = generate_prompts(model, victim_test_method_name, polluter_test_method_name, test_type, \

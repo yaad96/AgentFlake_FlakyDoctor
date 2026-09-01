@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-run_claude.py — CLI runner for FlakyDoctor's Claude repair.
+run_claude.py — CLI runner for FlakyDoctor's OpenAI/Claude repair.
 
 Presents a simple batch/pass@k command surface:
 
+    python3 runner/run_claude.py <container> --runs 1
     python3 runner/run_claude.py <container> --runs 1 --models claude
 
 It drives FlakyDoctor's existing container pipeline
@@ -15,9 +16,11 @@ NIO and TD.
 
 - Reads FlakyDoctor/test_config.csv, dispatches by test type.
 - Runs the repair once per --runs, archiving each to
-  FlakyDoctor/data/<container>/run_<NN>/ with meta.json + a verdict.
+  FlakyDoctor/data/<container>/<model>/run_<NN>/ with meta.json + a verdict.
+- OpenAI model aliases (config.OPENAI_MODELS) reach the repair loop via FD_OPENAI_MODEL.
 - Model aliases (config.CLAUDE_MODELS) reach the repair loop via FD_CLAUDE_MODEL.
-- Key: ANTHROPIC_API_KEY env wins, else FlakyDoctor/.anthropic_api_key.
+- Key: OPENAI_API_KEY env wins for OpenAI, else FlakyDoctor/.openai_api_key.
+  ANTHROPIC_API_KEY env wins for Claude, else FlakyDoctor/.anthropic_api_key.
   Use --reproduce-only for a free, no-key reproduction (no repair).
 """
 from __future__ import annotations
@@ -41,6 +44,7 @@ RUN_IN_CONTAINER = FLAKYDOCTOR_DIR / "docker" / "run_in_container.sh"
 OUTPUTS_DIR = FLAKYDOCTOR_DIR / "outputs"
 DATA_DIR = FLAKYDOCTOR_DIR / "data"
 KEY_FILE = FLAKYDOCTOR_DIR / ".anthropic_api_key"
+OPENAI_KEY_FILE = FLAKYDOCTOR_DIR / ".openai_api_key"
 
 sys.path.insert(0, str(SCRIPT_DIR))
 import config  # noqa: E402
@@ -59,16 +63,20 @@ def die(msg: str, code: int = 1):
 
 # --------------------------------------------------------------------------- config
 
-def resolve_model(alias: str) -> str:
+def resolve_model(alias: str) -> tuple[str, str, str]:
     key = alias.strip().lower()
+    if key in config.OPENAI_MODELS:
+        return "openai", "OpenAI", config.OPENAI_MODELS[key]
+    if key.startswith("gpt-"):
+        return "openai", "OpenAI", alias
     if key in config.CLAUDE_MODELS:
-        return config.CLAUDE_MODELS[key]
+        return "anthropic", "Claude", config.CLAUDE_MODELS[key]
     if key.startswith("claude"):
-        return alias  # a full claude model id, passed through unchanged
-    die(f"unsupported model '{alias}'. This runner is Claude-only; aliases: "
-        f"{', '.join(sorted(config.CLAUDE_MODELS))}. "
-        f"(FlakyDoctor also supports GPT-4, but only via src/flakydoctor.py --model GPT-4.)")
-    return ""  # unreachable
+        return "anthropic", "Claude", alias
+    die(f"unsupported model '{alias}'. OpenAI aliases: "
+        f"{', '.join(sorted(config.OPENAI_MODELS))}. Claude aliases: "
+        f"{', '.join(sorted(config.CLAUDE_MODELS))}.")
+    return "", "", ""  # unreachable
 
 
 def load_row(container: str) -> dict | None:
@@ -81,22 +89,28 @@ def load_row(container: str) -> dict | None:
     return None
 
 
-def resolve_key(reproduce_only: bool) -> str:
-    val = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not val and KEY_FILE.is_file():
-        val = KEY_FILE.read_text().strip()
+def resolve_key(provider: str, reproduce_only: bool) -> str:
+    env_name = "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    key_file = OPENAI_KEY_FILE if provider == "openai" else KEY_FILE
+    val = os.environ.get(env_name, "").strip()
+    if not val and key_file.is_file():
+        val = key_file.read_text().strip()
     if not val:
         if reproduce_only:
             return "unused"  # run_in_container.sh needs a key; --skip-repair never uses it
-        die("no Anthropic key found. Set ANTHROPIC_API_KEY or create FlakyDoctor/.anthropic_api_key "
+        die(f"no {provider} key found. Set {env_name} or create {key_file} "
             "(or pass --reproduce-only for a free, no-key reproduction).")
     return val
 
 
 # ---------------------------------------------------------------------------- runs
 
-def next_run_dir(container: str) -> tuple[Path, int]:
-    base = DATA_DIR / container
+def _slug(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "._-" else "_" for c in value).strip("._-") or "model"
+
+
+def next_run_dir(container: str, model_id: str) -> tuple[Path, int]:
+    base = DATA_DIR / container / _slug(model_id)
     base.mkdir(parents=True, exist_ok=True)
     nums = [int(p.name.split("_", 1)[1]) for p in base.glob("run_*")
             if p.is_dir() and p.name.split("_", 1)[1].isdigit()]
@@ -132,15 +146,21 @@ def verdict_from_results(fd_out_dir: Path) -> str:
     return "INCOMPLETE" if tool_failed else "FAILED"
 
 
-def run_once(container: str, test_type: str, model_alias: str, model_id: str,
+def run_once(container: str, test_type: str, provider: str, flakydoctor_model: str,
+             model_alias: str, model_id: str,
              reproduce_only: bool, key: str, keep_m2: bool = False) -> dict:
-    run_dir, run_idx = next_run_dir(container)
+    run_dir, run_idx = next_run_dir(container, model_id)
     log(f"container={container} type={test_type} model={model_alias}({model_id}) "
         f"run={run_idx}{' [reproduce-only]' if reproduce_only else ''} -> {run_dir}")
 
     env = dict(os.environ)
-    env["FD_CLAUDE_MODEL"] = model_id
-    env["ANTHROPIC_API_KEY"] = key
+    env["FD_RUN_MODEL"] = flakydoctor_model
+    if provider == "openai":
+        env["FD_OPENAI_MODEL"] = model_id
+        env["OPENAI_API_KEY"] = key
+    else:
+        env["FD_CLAUDE_MODEL"] = model_id
+        env["ANTHROPIC_API_KEY"] = key
     if keep_m2:
         # keep the offline .m2 AND the staged source/build between pass@k runs;
         # both are cleaned up on the final run of the batch.
@@ -186,6 +206,8 @@ def run_once(container: str, test_type: str, model_alias: str, model_id: str,
     meta = {
         "container": container,
         "test_type": test_type,
+        "provider": provider,
+        "flakydoctor_model": flakydoctor_model,
         "model_alias": model_alias,
         "model_id": model_id,
         "run_index": run_idx,
@@ -223,10 +245,10 @@ def append_summary(container: str, metas: list[dict]) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="CLI runner for FlakyDoctor's Claude repair (ID/OD/NIO/TD only).")
+        description="CLI runner for FlakyDoctor's OpenAI/Claude repair (ID/OD/NIO/TD only).")
     ap.add_argument("container", help="result_container name from test_config.csv")
-    ap.add_argument("--models", default="claude",
-                    help="comma-separated Claude model aliases/ids (default: claude)")
+    ap.add_argument("--models", default="openai",
+                    help="comma-separated model aliases/ids (default: openai -> gpt-5.4)")
     ap.add_argument("--runs", type=int, default=1,
                     help="independent runs per model for pass@k (default 1)")
     ap.add_argument("--reproduce-only", action="store_true",
@@ -245,7 +267,6 @@ def main() -> None:
     if args.runs < 1:
         die("--runs must be >= 1")
 
-    key = resolve_key(args.reproduce_only)
     resolved = [(m.strip(), resolve_model(m)) for m in args.models.split(",") if m.strip()]
     if not resolved:
         die("no models given")
@@ -253,10 +274,12 @@ def main() -> None:
     metas: list[dict] = []
     total = len(resolved) * args.runs
     done = 0
-    for alias, model_id in resolved:
+    for alias, (provider, flakydoctor_model, model_id) in resolved:
+        key = resolve_key(provider, args.reproduce_only)
         for _ in range(args.runs):
             done += 1
-            metas.append(run_once(args.container, test_type, alias, model_id,
+            metas.append(run_once(args.container, test_type, provider, flakydoctor_model,
+                                  alias, model_id,
                                   args.reproduce_only, key, keep_m2=done < total))
     append_summary(args.container, metas)
 

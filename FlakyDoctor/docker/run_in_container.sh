@@ -15,7 +15,7 @@
 #   1. looks up the row in test_config.csv (in the FlakyDoctor root) to read its Java version
 #   2. builds the matching image (flakydoctor-od8 / flakydoctor-od11) once
 #   3. runs the container as your host UID/GID with FlakyDoctor bind-mounted, and
-#      invokes  src/run_af_fd.py --testorder --container <id> --model Claude
+#      invokes  src/run_af_fd.py --testorder --container <id> --model OpenAI
 set -euo pipefail
 
 CONTAINER="${1:-}"
@@ -29,16 +29,23 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLAKYDOCTOR_DIR="$(dirname "$SCRIPT_DIR")"
 TEST_CONFIG="${TEST_CONFIG:-$FLAKYDOCTOR_DIR/test_config.csv}"
-API_KEY_FILE="${API_KEY_FILE:-$FLAKYDOCTOR_DIR/.anthropic_api_key}"
+RUN_MODEL="${FD_RUN_MODEL:-OpenAI}"
+if [[ "$RUN_MODEL" == "Claude" ]]; then
+    API_KEY_ENV_NAME="ANTHROPIC_API_KEY"
+    API_KEY_FILE="${API_KEY_FILE:-$FLAKYDOCTOR_DIR/.anthropic_api_key}"
+else
+    API_KEY_ENV_NAME="OPENAI_API_KEY"
+    API_KEY_FILE="${API_KEY_FILE:-$FLAKYDOCTOR_DIR/.openai_api_key}"
+fi
 
 # --skip-repair reproduces the flake only and never calls the API, so it needs no
 # key. Detect it among the passthrough args.
 SKIP_REPAIR="false"
 for _a in "$@"; do [[ "$_a" == "--skip-repair" ]] && SKIP_REPAIR="true"; done
 
-# Resolve the Anthropic key: ANTHROPIC_API_KEY env wins, else the key file.
+# Resolve the API key: provider env wins, else the provider-specific key file.
 # Required only for an actual repair run (matches runner/run_claude.py's behavior).
-API_KEY="${ANTHROPIC_API_KEY:-}"
+API_KEY="${!API_KEY_ENV_NAME:-}"
 if [[ -z "$API_KEY" && -f "$API_KEY_FILE" ]]; then
     API_KEY="$(cat "$API_KEY_FILE")"
 fi
@@ -46,7 +53,7 @@ if [[ -z "$API_KEY" ]]; then
     if [[ "$SKIP_REPAIR" == "true" ]]; then
         API_KEY="unused"   # never sent to the API in --skip-repair mode
     else
-        echo "no Anthropic key: set ANTHROPIC_API_KEY=... or create $API_KEY_FILE (or pass --skip-repair)" >&2
+        echo "no API key: set $API_KEY_ENV_NAME=... or create $API_KEY_FILE (or pass --skip-repair)" >&2
         exit 1
     fi
 fi
@@ -139,7 +146,9 @@ docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp/fdhome \
     -e ANTHROPIC_API_KEY="$API_KEY" \
+    -e OPENAI_API_KEY="$API_KEY" \
     -e FD_CLAUDE_MODEL="${FD_CLAUDE_MODEL:-}" \
+    -e FD_OPENAI_MODEL="${FD_OPENAI_MODEL:-gpt-5.4}" \
     -e AF_FD_ALLOW_NON_REPRO_TD="${AF_FD_ALLOW_NON_REPRO_TD:-}" \
     -e KEEP_SOURCE="${KEEP_SOURCE:-}" \
     -e KEEP_FLAKY_M2="${KEEP_FLAKY_M2:-}" \
@@ -157,5 +166,5 @@ docker run --rm \
         --test-config "'"$(python3 -c 'import os,sys; print(os.path.relpath(sys.argv[1], sys.argv[2]))' "$TEST_CONFIG" "$FLAKYDOCTOR_DIR")"'" \
         --container "'"$CONTAINER"'" \
         '"$MODE_ARGS"' \
-        --model Claude \
-        --api-key "$ANTHROPIC_API_KEY" '"$*"
+        --model "'"$RUN_MODEL"'" \
+        --api-key "$'"$API_KEY_ENV_NAME"'" '"$*"

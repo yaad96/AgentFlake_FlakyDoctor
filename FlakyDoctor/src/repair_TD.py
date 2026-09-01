@@ -14,7 +14,7 @@ import utils
 from bs4 import BeautifulSoup
 from pathlib import Path
 # torch/transformers are only needed for local HuggingFace models (MagicCoder);
-# imported lazily inside the model-loading branch so GPT-4/Claude runs do not require them.
+# imported lazily inside the model-loading branch so OpenAI/Claude runs do not require them.
 from operate_patch import dump_all_rounds_patch, apply_patch, apply_patch_stitch, write_patch, write_patch_stitch
 from stitching import stitching_consistency
 from parse_nondex import * #parse_err_msg, parse_patch_magiccoder, parse_patch_gpt, run_test_with_td, analyze_td_build_result, analyze_td_test_result
@@ -83,8 +83,8 @@ def main(pr_csv, projects_dir, details_csv, model, nondex_times, result_csv, res
         }
         loading_model = AutoModelForCausalLM.from_pretrained(model_load_path[model], device_map="auto", cache_dir='./huggingface')
         tokenizer = AutoTokenizer.from_pretrained(model_load_path[model], cache_dir='./huggingface')
-    elif model == "GPT-4":
-        loading_model = "GPT-4"
+    elif model in ["OpenAI", "GPT-4"]:
+        loading_model = model
         tokenizer = None
     elif model == "Claude":
         loading_model = "Claude"
@@ -266,7 +266,7 @@ library's own synchronization/await helper, so the test passes regardless of exe
 or shorten waits, and do NOT weaken or remove the assertions to mask the problem. You may ONLY edit this test
 method, so put any needed synchronization/waiting INSIDE it; do not add new @Before/@After methods."""
     err_msg = " ".join(err_msg_list)
-    if model in ["GPT-4", "Claude"]:
+    if model in ["OpenAI", "GPT-4", "Claude"]:
         if round == 1:
             prefix = """You are a software testing expert. I want you to fix a flaky test. {} is a flaky test of type {}, located in the following java class {}.""".\
                 format(test_method_name, test_type, test_method_content)
@@ -307,7 +307,7 @@ Assume required classes in the original code are setup correctly, do not include
             response = full_response.content[0].text
         else:
             full_response = openai.ChatCompletion.create(
-                model = "gpt-4", #"gpt-3.5-turbo",
+                model = os.environ.get("FD_OPENAI_MODEL") or "gpt-5.4",
                 temperature = 0.2,
                 messages = [
                     {"role": "user",
@@ -397,7 +397,7 @@ def repair_TD_tests(test_info, model, nondex_times,result_csv,result_json,save_d
             print("Index {}: ROUND {} to Repair Test {}".format(idx, round, test))
             now = datetime.datetime.now()
             print("Starting prompting...", now)
-            if model in ["GPT-4", "Claude"]:
+            if model in ["OpenAI", "GPT-4", "Claude"]:
                 try:
                     response, prompt = "", ""
                     response, prompt = generate_prompts(model, test_method_name, test_type, test_method_content, err_msg, err_code, potential_apis,round, loading_model, tokenizer)

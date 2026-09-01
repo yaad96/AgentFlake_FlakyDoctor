@@ -21,3 +21,4 @@ __pycache__/
 
 # VS Code workspace settings — local editor config, not part of the project
 .vscode/
+.openai_api_key
