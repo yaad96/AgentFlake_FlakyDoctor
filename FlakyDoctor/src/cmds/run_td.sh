@@ -27,8 +27,8 @@ run_test(){
             mvn test-compile -pl ${module} -am -q -DfailIfNoTests=false -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true || return
         fi
     fi
-    echo mvn dependency:properties surefire:test -pl ${module} -Dtest=${test} -DfailIfNoTests=false -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true
-    mvn dependency:properties surefire:test -pl ${module} -Dtest=${test} -DfailIfNoTests=false -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true
+    echo mvn org.apache.maven.plugins:maven-dependency-plugin:3.6.1:properties surefire:test -pl ${module} -Dtest=${test} -DfailIfNoTests=false -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true
+    mvn org.apache.maven.plugins:maven-dependency-plugin:3.6.1:properties surefire:test -pl ${module} -Dtest=${test} -DfailIfNoTests=false -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Dspotless.check.skip -Ddisable.checks=true
 }
 
 echo "* RUNNING TD victim ${test} STARTING at $(date)"

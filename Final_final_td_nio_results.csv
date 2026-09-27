@@ -80,3 +80,4 @@ logback1,logback1,td,NO(Tool Failure),0,0,0,,,0,2,2,INCOMPLETE,1,58.0,2026-07-28
 tdincubatoruniffle1,tdincubatoruniffle1,td,YES,1476,1114,2590,35.34,0.021138,1,1,1,PASSED,0,123.5,2026-07-20T22:57:14.308768+00:00,claude-sonnet-4-6
 tdjavawebsocket1,tdjavawebsocket1,td,NO,4947,2856,7803,81.31,0.057681,5,1,1,FAILED,0,272.8,2026-07-20T22:48:23.479182+00:00,claude-sonnet-4-6
 tdwro4jcore1,tdwro4jcore1,td,NO,4963,2502,7465,40.87,0.052419,5,1,1,FAILED,0,87.5,2026-07-20T22:43:50.474889+00:00,claude-sonnet-4-6
+APEXCORE-617,APEXCORE-617-testHandleIdleTimeOutsideStreamingWindow,td,NO,4579,2433,7012,551.61,0.050232,5,1,1,FAILED,0,804.1,2026-09-27T01:33:08.210950+00:00,claude-sonnet-4-6
