@@ -134,6 +134,23 @@ def main(pr_csv, clone_dir, test_file_info, model, nondex_times,result_csv,resul
                             info["victim_class_content"][0] = victim_class_content
                             info["victim_class_imports"] = utils.get_imports(victim_class_content)
                             info["victim_method_content"] = utils.get_test_method(info["victim_name"],victim_class_content)
+                            if info["victim_method_content"] is None:
+                                # The victim may be inherited from a base class (not defined in this
+                                # concrete test file). Follow the extends chain, as repair_TD does, and
+                                # retarget the repair to the base-class file that defines it.
+                                resolved = utils.resolve_inherited_test_method(
+                                    info["victim_name"], victim_class_name, victim_class_content, project_dir, module)
+                                if resolved is not None:
+                                    base_path, base_content, base_code = resolved
+                                    victim_file_path = base_path
+                                    relative_victim_file_path = base_path.split(project_dir + "/")[-1]
+                                    utils.git_checkout_file(project_dir, relative_victim_file_path)
+                                    victim_class_content = base_content
+                                    info["relative_victim_file_path"] = relative_victim_file_path
+                                    info["victim_file_path"] = base_path
+                                    info["victim_class_content"][0] = base_content
+                                    info["victim_class_imports"] = utils.get_imports(base_content)
+                                    info["victim_method_content"] = base_code
                             if "/src/" in file_path:
                                 root_path = file_path.split("/src/")[0]
                                 pom_path = os.path.join(root_path,"pom.xml")
@@ -153,6 +170,21 @@ def main(pr_csv, clone_dir, test_file_info, model, nondex_times,result_csv,resul
                             info["polluter_class_content"][0] = polluter_class_content
                             info["polluter_class_imports"] = utils.get_imports(polluter_class_content)
                             info["polluter_method_content"] = utils.get_test_method(info["polluter_name"],polluter_class_content)
+                            if info["polluter_method_content"] is None:
+                                # same inherited-method lookup as for the victim
+                                resolved = utils.resolve_inherited_test_method(
+                                    info["polluter_name"], polluter_class_name, polluter_class_content, project_dir, module)
+                                if resolved is not None:
+                                    base_path, base_content, base_code = resolved
+                                    polluter_file_path = base_path
+                                    relative_polluter_file_path = base_path.split(project_dir + "/")[-1]
+                                    utils.git_checkout_file(project_dir, relative_polluter_file_path)
+                                    polluter_class_content = base_content
+                                    info["relative_polluter_file_path"] = relative_polluter_file_path
+                                    info["polluter_file_path"] = base_path
+                                    info["polluter_class_content"][0] = base_content
+                                    info["polluter_class_imports"] = utils.get_imports(base_content)
+                                    info["polluter_method_content"] = base_code
 
                 if victim_file_path_found and polluter_file_path_found:
                     jdk = "8"
@@ -774,7 +806,9 @@ def repair_OD_tests(test_info, model,result_csv,result_json,save_dir, idx, loadi
                 result_dict[key] = test_info[key]
             utils.write_dict_csv(result_csv, result_csv_heads,result_dict)
             utils.write_json_attach(result_json, result_dict)
-            utils.git_checkout_file(project_dir,relative_file_path)
+            # OD has two files; there is no single relative_file_path here
+            utils.git_checkout_file(project_dir,relative_victim_file_path)
+            utils.git_checkout_file(project_dir,relative_polluter_file_path)
             return result_dict
         
         print("polluter_err_msg {}; victim_err_msg {}".format(polluter_err_msg, victim_err_msg))

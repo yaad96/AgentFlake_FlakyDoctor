@@ -14,7 +14,8 @@ NOTE: this is a plain CLI runner, not an agent — FlakyDoctor calls the Anthrop
 API directly inside its neuro-symbolic repair loop. FlakyDoctor repairs ID, OD,
 NIO and TD.
 
-- Reads FlakyDoctor/test_config.csv, dispatches by test type.
+- Reads FlakyDoctor/test_config.csv, then mahbub_test_config.csv (first match wins),
+  dispatches by test type.
 - Runs the repair once per --runs, archiving each to
   FlakyDoctor/data/<container>/<model>/run_<NN>/ with meta.json + a verdict.
 - OpenAI model aliases (config.OPENAI_MODELS) reach the repair loop via FD_OPENAI_MODEL.
@@ -40,6 +41,9 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 FLAKYDOCTOR_DIR = SCRIPT_DIR.parent
 CSV_FILE = FLAKYDOCTOR_DIR / "test_config.csv"
+# Searched in order; the first file with a matching row wins. Some containers
+# (e.g. oddubbo1, idhivestnd1) exist only in mahbub_test_config.csv.
+CSV_FILES = [CSV_FILE, FLAKYDOCTOR_DIR / "mahbub_test_config.csv"]
 RUN_IN_CONTAINER = FLAKYDOCTOR_DIR / "docker" / "run_in_container.sh"
 OUTPUTS_DIR = FLAKYDOCTOR_DIR / "outputs"
 DATA_DIR = FLAKYDOCTOR_DIR / "data"
@@ -79,14 +83,18 @@ def resolve_model(alias: str) -> tuple[str, str, str]:
     return "", "", ""  # unreachable
 
 
-def load_row(container: str) -> dict | None:
+def load_row(container: str) -> tuple[dict | None, Path | None]:
+    """Return (row, config file it came from), searching CSV_FILES in order."""
     if not CSV_FILE.is_file():
         die(f"test_config.csv not found at {CSV_FILE}")
-    with open(CSV_FILE, encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            if (row.get("result_container") or "").strip() == container:
-                return row
-    return None
+    for csv_path in CSV_FILES:
+        if not csv_path.is_file():
+            continue
+        with open(csv_path, encoding="utf-8-sig", newline="") as f:
+            for row in csv.DictReader(f):
+                if (row.get("result_container") or "").strip() == container:
+                    return row, csv_path
+    return None, None
 
 
 def resolve_key(provider: str, reproduce_only: bool) -> str:
@@ -148,12 +156,16 @@ def verdict_from_results(fd_out_dir: Path) -> str:
 
 def run_once(container: str, test_type: str, provider: str, flakydoctor_model: str,
              model_alias: str, model_id: str,
-             reproduce_only: bool, key: str, keep_m2: bool = False) -> dict:
+             reproduce_only: bool, key: str, keep_m2: bool = False,
+             test_config: Path = CSV_FILE) -> dict:
     run_dir, run_idx = next_run_dir(container, model_id)
     log(f"container={container} type={test_type} model={model_alias}({model_id}) "
         f"run={run_idx}{' [reproduce-only]' if reproduce_only else ''} -> {run_dir}")
 
     env = dict(os.environ)
+    # run_in_container.sh reads the row (type, module, JDK) from TEST_CONFIG and hands
+    # the same file to the driver, so point it at the file the row was found in.
+    env["TEST_CONFIG"] = str(test_config)
     env["FD_RUN_MODEL"] = flakydoctor_model
     if provider == "openai":
         env["FD_OPENAI_MODEL"] = model_id
@@ -257,9 +269,12 @@ def main() -> None:
 
     if not RUN_IN_CONTAINER.is_file():
         die(f"missing {RUN_IN_CONTAINER}")
-    row = load_row(args.container)
+    row, test_config = load_row(args.container)
     if not row:
-        die(f"container '{args.container}' not found in {CSV_FILE.name}")
+        die(f"container '{args.container}' not found in "
+            f"{' or '.join(p.name for p in CSV_FILES)}")
+    if test_config != CSV_FILE:
+        log(f"row for {args.container} found in {test_config.name}")
     test_type = (row.get("test_type") or "").strip().lower()
     if test_type not in SUPPORTED_TYPES:
         die(f"test type '{test_type}' is not supported by FlakyDoctor (only ID, OD, NIO and TD). "
@@ -280,7 +295,8 @@ def main() -> None:
             done += 1
             metas.append(run_once(args.container, test_type, provider, flakydoctor_model,
                                   alias, model_id,
-                                  args.reproduce_only, key, keep_m2=done < total))
+                                  args.reproduce_only, key, keep_m2=done < total,
+                                  test_config=test_config))
     append_summary(args.container, metas)
 
     log("=" * 60)

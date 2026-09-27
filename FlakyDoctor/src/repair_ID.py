@@ -50,8 +50,11 @@ def locate_test_file(project_dir, test_class_short_name, module, test_path):
             if not file.endswith(test_class_short_name + ".java"):
                 continue
             file_path = os.path.join(root, file)
+            # "/tests/" too: some projects keep test sources outside the Maven layout
+            # (OpenRefine: main/tests/server/src/...)
             if test_path in file_path and module in file_path \
-                and "/test-classes/" not in file_path and "/test/" in file_path:
+                and "/test-classes/" not in file_path \
+                and ("/test/" in file_path or "/tests/" in file_path):
                     potential_file_paths.append(file_path)
     return potential_file_paths
 
@@ -108,6 +111,23 @@ def main(pr_csv, projects_dir, details_csv, model, nondex_times, result_csv, res
                         info["test_class_content"][0] = test_class_content
                         info["imports"] = utils.get_imports(test_class_content)
                         info["test_method_content"] = utils.get_test_method(info["method_name"],test_class_content)
+                        if info["test_method_content"] is None:
+                            # The test method may be inherited from a base class (not defined in
+                            # this concrete test file). Follow the extends chain, as repair_TD does,
+                            # and retarget the repair to the base-class file that defines it.
+                            resolved = utils.resolve_inherited_test_method(
+                                info["method_name"], test_class_short_name, test_class_content, project_dir, module)
+                            if resolved is not None:
+                                base_path, base_content, base_code = resolved
+                                relative_file_path = base_path.split(project_dir + "/")[-1]
+                                utils.git_checkout_file(project_dir, relative_file_path)
+                                file_path = base_path
+                                test_class_content = base_content
+                                info["relative_file_path"] = relative_file_path
+                                info["file_path"] = base_path
+                                info["test_class_content"][0] = base_content
+                                info["imports"] = utils.get_imports(base_content)
+                                info["test_method_content"] = base_code
                         if "/src/" in file_path:
                             root_path = file_path.split("/src/")[0]
                             pom_path = os.path.join(root_path,"pom.xml")
