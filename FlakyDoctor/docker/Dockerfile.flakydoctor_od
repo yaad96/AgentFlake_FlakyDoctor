@@ -67,9 +67,12 @@ RUN if [ "$WITH_TESTORDER" = "true" ]; then \
 
 # FlakyDoctor's Claude-path Python deps only. openai is a hard top-level import
 # in flakydoctor.py/repair_OD.py even for Claude runs, so it must be present.
+# anthropic is pinned: 1.x (Python >= 3.10, so it lands in the Ubuntu-based JDK-17
+# image) dropped `temperature` from Messages.create(), which the repair loop passes.
+# 0.125.0 is what the Python-3.9 JDK-8/11 images already resolve to.
 RUN pip3 install --no-cache-dir \
         "openai==0.28.0" \
-        anthropic \
+        "anthropic==0.125.0" \
         "beautifulsoup4==4.12.3" \
         lxml && \
     pip3 uninstall -y javalang || true && \
