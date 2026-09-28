@@ -368,6 +368,21 @@ def ensure_git_baseline(project_dir):
                          capture_output=True, text=True)
     if top.returncode == 0 and \
             os.path.realpath(top.stdout.strip()) == os.path.realpath(project_dir):
+        # The zip shipped its own .git. Its working tree can differ from HEAD: oddubbo1's
+        # dataset rewrote 69 pom.xml files after checkout, and FlakyDoctor's first
+        # `git stash` reverted them, so every build afterwards failed. Commit tracked-file
+        # edits as the baseline so stash/checkout restore the dataset's tree, not upstream's.
+        # Tracked files only (-u): a re-run must not sweep build output into the baseline.
+        dirty = subprocess.run(["git", "-C", project_dir, "status", "--porcelain",
+                                "--untracked-files=no"],
+                               capture_output=True, text=True).stdout.strip()
+        if dirty:
+            log(f"project ships its own git repo with {len(dirty.splitlines())} uncommitted "
+                "tracked change(s) — committing them as the baseline")
+            subprocess.run(["git", "-C", project_dir, "add", "-u"], check=True)
+            subprocess.run(["git", "-C", project_dir,
+                            "-c", "user.name=FlakyDoctor", "-c", "user.email=flakydoctor@local",
+                            "commit", "-qm", "AgentFlake dataset edits baseline"], check=True)
         return
     log("creating project-local git baseline (isolates FlakyDoctor's git ops from the outer repo)")
     subprocess.run(["git", "-C", project_dir, "init", "-q"], check=True)
