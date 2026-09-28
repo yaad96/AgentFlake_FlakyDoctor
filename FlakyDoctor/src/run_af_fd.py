@@ -28,6 +28,7 @@ Usage (from the FlakyDoctor root):
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -55,6 +56,15 @@ MVN_SKIP_FLAGS = (
 # antrun task that -Dmaven.antrun.skip starves, breaking compilation. The build
 # fallback uses this antrun-enabled variant (skip dropped) so that codegen runs.
 MVN_SKIP_FLAGS_ANTRUN = [f for f in MVN_SKIP_FLAGS if f != "-Dmaven.antrun.skip"]
+
+# Local archive override, HADOOP-12588 ONLY: FlakyDoctor/local_archives/HADOOP-12588.zip
+# (substitute with a deterministic forcing) is staged instead of downloading row["url"].
+# Every other container is fetched exactly as before. FlakyDoctor/ is mounted at
+# /work in docker, so the same path works inside it.
+LOCAL_ARCHIVE_ZIPS = ("HADOOP-12588",)
+LOCAL_ARCHIVES_DIR = os.environ.get("AF_LOCAL_ARCHIVES_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_archives")
+LOCAL_ARCHIVE_MARKER = ".local_archive.sha256"   # which local zip a container was staged from
 
 
 def log(msg):
@@ -122,6 +132,21 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         log(f"--fresh: removing existing staged container {container_dir}")
         shutil.rmtree(container_dir, ignore_errors=True)
 
+    # For LOCAL_ARCHIVE_ZIPS, a local archive wins over row["url"]. Anything staged
+    # from another archive (e.g. an older Zenodo staging) is wiped first: the
+    # "already staged" skip below and the no-overwrite move of the patch files
+    # would otherwise keep serving the old FlakyCodeChange.patch.
+    local_zip = os.path.join(LOCAL_ARCHIVES_DIR, zip_base + ".zip")
+    local_sha = None
+    if zip_base in LOCAL_ARCHIVE_ZIPS and os.path.isfile(local_zip):
+        with open(local_zip, "rb") as f:
+            local_sha = hashlib.sha256(f.read()).hexdigest()
+        marker = os.path.join(container_dir, LOCAL_ARCHIVE_MARKER)
+        staged_sha = open(marker).read().strip() if os.path.isfile(marker) else None
+        if os.path.isdir(container_dir) and staged_sha != local_sha:
+            log(f"{container_dir} was not staged from local archive {local_zip} — re-staging")
+            _rmtree_force(container_dir)
+
     project_dir, project_name, github_url = _find_staged_project(container_dir)
     if project_dir:
         if os.path.isdir(os.path.join(container_dir, "Flakym2")):
@@ -132,8 +157,10 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         log(f"staged project found but Flakym2 (offline .m2) missing — re-staging {container_dir}")
         shutil.rmtree(container_dir, ignore_errors=True)
 
-    zip_path = os.path.join("/tmp", f"af_fd_{zip_base}.zip")
-    if not os.path.exists(zip_path):
+    zip_path = local_zip if local_sha else os.path.join("/tmp", f"af_fd_{zip_base}.zip")
+    if local_sha:
+        log(f"using local archive {local_zip} (not downloading {row['url']})")
+    elif not os.path.exists(zip_path):
         log(f"downloading {row['url']} ...")
         try:
             # download to a temp name; only rename once complete, so an interrupted
@@ -146,6 +173,8 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
             raise
     log(f"unzipping {zip_path} ...")
     if not zipfile.is_zipfile(zip_path):
+        if local_sha:
+            die(f"local archive {zip_path} is not a valid zip")
         os.remove(zip_path)
         die(f"{zip_path} is not a valid zip (corrupt download removed — rerun to refetch)")
     extract_root = os.path.join("/tmp", f"af_fd_extract_{zip_base}")
@@ -179,7 +208,10 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         if os.path.exists(src) and not os.path.exists(os.path.join(container_dir, extra)):
             shutil.move(src, os.path.join(container_dir, extra))
     shutil.rmtree(extract_root, ignore_errors=True)
-    if not keep_zip:
+    if local_sha:   # never delete the local archive; record what was staged
+        with open(os.path.join(container_dir, LOCAL_ARCHIVE_MARKER), "w") as f:
+            f.write(local_sha + "\n")
+    elif not keep_zip:
         os.remove(zip_path)
 
     project_dir = os.path.join(container_dir, project_name)
