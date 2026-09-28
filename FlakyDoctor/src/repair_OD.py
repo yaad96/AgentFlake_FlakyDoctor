@@ -322,6 +322,14 @@ def analyze_surefire_test_result(output):
     else:
         return "test_failure"
 
+def _mentions_file(line, class_file):
+    """True if `line` refers to `class_file` itself. A plain substring test is wrong
+    when one test class name ends with the other's: ServiceBasedNamingStoreTestCase.java
+    is inside WritableServiceBasedNamingStoreTestCase.java, which attributed the
+    polluter's compiler lines to the victim and indexed past the victim's last line."""
+    return re.search(r"(?<![A-Za-z0-9_$])" + re.escape(class_file), line) is not None
+
+
 def parse_compilation_err(output, polluter_test_class,victim_test_class, polluter_class_content,victim_class_content):
     polluter_class_file = polluter_test_class.split(".")[-1] + ".java"
     victim_class_file = victim_test_class.split(".")[-1] + ".java"
@@ -338,13 +346,13 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
     for output_line in output.split("\n"):
         p_lineno = None
         v_lineno = None
-        if polluter_class_file in output_line:
+        if _mentions_file(output_line, polluter_class_file):
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split(")")[0]
             try:
                 p_lineno = int(p_lineno_str)
             except:
                 pass
-        if polluter_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, polluter_class_file) and "[" in output_line and "]" in output_line:
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 p_lineno = int(p_lineno_str)
@@ -353,13 +361,13 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
         if p_lineno != None and p_lineno not in polluter_lineno_list:
             polluter_lineno_list.append(p_lineno)
 
-        if victim_class_file in output_line:
+        if _mentions_file(output_line, victim_class_file):
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split(")")[0]
             try:
                 v_lineno = int(v_lineno_str)
             except:
                 pass
-        if victim_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, victim_class_file) and "[" in output_line and "]" in output_line:
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 v_lineno = int(v_lineno_str)
@@ -369,12 +377,18 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
             victim_lineno_list.append(v_lineno)
 
     for number in polluter_lineno_list:
-        err_code = polluter_class_content.split("\n")[int(number)-1]
+        polluter_lines = polluter_class_content.split("\n")
+        if not 1 <= int(number) <= len(polluter_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = polluter_lines[int(number)-1]
         if err_code.strip() not in polluter_err_code_list:
             polluter_err_code_list.append(err_code.strip())
     
     for number in victim_lineno_list:
-        err_code = victim_class_content.split("\n")[int(number)-1]
+        victim_lines = victim_class_content.split("\n")
+        if not 1 <= int(number) <= len(victim_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = victim_lines[int(number)-1]
         if err_code.strip() not in victim_err_code_list:
             victim_err_code_list.append(err_code.strip())
         
@@ -385,15 +399,15 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
         if not line.startswith("[ERROR]"):
             continue
         tmp_line = line.replace("[ERROR]","").strip()
-        if polluter_class_file in tmp_line:
+        if _mentions_file(tmp_line, polluter_class_file):
             msg = tmp_line.split("]")[-1]
             if msg not in polluter_err_code_list:
                 polluter_err_msg_list.append(msg)
-        if victim_class_file in tmp_line:
+        if _mentions_file(tmp_line, victim_class_file):
             msg = tmp_line.split("]")[-1]
             if msg not in victim_err_code_list:
                 victim_err_msg_list.append(msg)
-        if polluter_class_file not in tmp_line and victim_class_file not in tmp_line:
+        if not _mentions_file(tmp_line, polluter_class_file) and not _mentions_file(tmp_line, victim_class_file):
             polluter_err_msg_list.append(tmp_line)
             victim_err_msg_list.append(tmp_line)
     return polluter_err_msg_list, victim_err_msg_list, polluter_err_code_list, victim_err_code_list
@@ -423,13 +437,13 @@ def parse_err_msg(output,polluter,victim,polluter_test_class,victim_test_class, 
         p_lineno = None
         v_lineno = None
         #polluter
-        if polluter_class_file in output_line:
+        if _mentions_file(output_line, polluter_class_file):
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split(")")[0]
             try:
                 p_lineno = int(p_lineno_str)
             except:
                 pass
-        if polluter_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, polluter_class_file) and "[" in output_line and "]" in output_line:
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 p_lineno = int(p_lineno_str)
@@ -438,13 +452,13 @@ def parse_err_msg(output,polluter,victim,polluter_test_class,victim_test_class, 
         if p_lineno != None and p_lineno not in polluter_lineno_list:
             polluter_lineno_list.append(p_lineno)
         #victim
-        if victim_class_file in output_line:
+        if _mentions_file(output_line, victim_class_file):
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split(")")[0]
             try:
                 v_lineno = int(v_lineno_str)
             except:
                 pass
-        if victim_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, victim_class_file) and "[" in output_line and "]" in output_line:
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 v_lineno = int(v_lineno_str)
@@ -454,12 +468,18 @@ def parse_err_msg(output,polluter,victim,polluter_test_class,victim_test_class, 
             victim_lineno_list.append(v_lineno)
 
     for number in polluter_lineno_list:
-        err_code = polluter_class_content.split("\n")[int(number)-1]
+        polluter_lines = polluter_class_content.split("\n")
+        if not 1 <= int(number) <= len(polluter_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = polluter_lines[int(number)-1]
         if err_code.strip() not in polluter_err_code_list:
             polluter_err_code_list.append(err_code.strip())
     
     for number in victim_lineno_list:
-        err_code = victim_class_content.split("\n")[int(number)-1]
+        victim_lines = victim_class_content.split("\n")
+        if not 1 <= int(number) <= len(victim_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = victim_lines[int(number)-1]
         if err_code.strip() not in victim_err_code_list:
             victim_err_code_list.append(err_code.strip())
 
