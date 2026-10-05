@@ -2,6 +2,7 @@
 FlakyDoctor/projects/
 FlakyDoctor/outputs/
 FlakyDoctor/data/
+data_*
 FlakyDoctor/install_*.csv
 
 # Untracked Anthropic API key — holds the secret key, never commit
@@ -21,3 +22,7 @@ __pycache__/
 
 # VS Code workspace settings — local editor config, not part of the project
 .vscode/
+.openai_api_key
+
+# HADOOP-12588 substitute archive (see FlakyDoctor/local_archives/README.md) -- too large for git
+FlakyDoctor/local_archives/*.zip

@@ -23,11 +23,17 @@ def stitching_consistency(original_test_class_content,test_class_content_before_
     }
     if_stitch = False
 
-    original_method, original_node, original_modifiers, original_name, original_parameters, original_return_type, original_throws  \
-        = utils.extract_method(test_method_name, original_test_class_content)
-
-    test_code_before_stitching, before_node, before_modifiers, before_name, before_parameters, before_return_type, before_throws  \
-        = utils.extract_method(test_method_name, test_class_content_before_stitching)
+    original = utils.extract_method(test_method_name, original_test_class_content)
+    before = utils.extract_method(test_method_name, test_class_content_before_stitching)
+    if original is None or before is None:
+        # javalang could not parse the class (e.g. Java-8 type-use annotations it does not
+        # support), so extract_method returns None and the AST-based signature-consistency
+        # stitch is impossible. Skip it (if_stitch stays False) rather than crashing on a
+        # None unpack — that TypeError otherwise aborts the whole repair (tool failure /
+        # INCOMPLETE). The build error is instead fed back to the model in the next round.
+        return after_patch, if_stitch
+    original_method, original_node, original_modifiers, original_name, original_parameters, original_return_type, original_throws = original
+    test_code_before_stitching, before_node, before_modifiers, before_name, before_parameters, before_return_type, before_throws = before
     
     test_code_after_stitching = None
     

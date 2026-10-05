@@ -10,7 +10,7 @@ import re
 import time
 import update_pom
 # torch/transformers are only needed for local HuggingFace models (MagicCoder/CodeLlama/StarCoder);
-# imported lazily inside the model-loading branches so GPT-4/Claude runs do not require them.
+# imported lazily inside the model-loading branches so OpenAI/Claude runs do not require them.
 from bs4 import BeautifulSoup
 from pathlib import Path
 import json
@@ -40,8 +40,8 @@ def main(pr_csv, clone_dir, test_file_info, model, nondex_times,result_csv,resul
         from transformers import AutoModelForCausalLM, AutoTokenizer
         loading_model = AutoModelForCausalLM.from_pretrained(load_path[model], device_map="auto", cache_dir='./huggingface', offload_folder = './huggingface')
         tokenizer = AutoTokenizer.from_pretrained(load_path[model], cache_dir='./huggingface')
-    elif model == "GPT-4":
-        loading_model = "GPT-4"
+    elif model in ["OpenAI", "GPT-4"]:
+        loading_model = model
         tokenizer = None
     elif model == "Claude":
         loading_model = "Claude"
@@ -134,6 +134,23 @@ def main(pr_csv, clone_dir, test_file_info, model, nondex_times,result_csv,resul
                             info["victim_class_content"][0] = victim_class_content
                             info["victim_class_imports"] = utils.get_imports(victim_class_content)
                             info["victim_method_content"] = utils.get_test_method(info["victim_name"],victim_class_content)
+                            if info["victim_method_content"] is None:
+                                # The victim may be inherited from a base class (not defined in this
+                                # concrete test file). Follow the extends chain, as repair_TD does, and
+                                # retarget the repair to the base-class file that defines it.
+                                resolved = utils.resolve_inherited_test_method(
+                                    info["victim_name"], victim_class_name, victim_class_content, project_dir, module)
+                                if resolved is not None:
+                                    base_path, base_content, base_code = resolved
+                                    victim_file_path = base_path
+                                    relative_victim_file_path = base_path.split(project_dir + "/")[-1]
+                                    utils.git_checkout_file(project_dir, relative_victim_file_path)
+                                    victim_class_content = base_content
+                                    info["relative_victim_file_path"] = relative_victim_file_path
+                                    info["victim_file_path"] = base_path
+                                    info["victim_class_content"][0] = base_content
+                                    info["victim_class_imports"] = utils.get_imports(base_content)
+                                    info["victim_method_content"] = base_code
                             if "/src/" in file_path:
                                 root_path = file_path.split("/src/")[0]
                                 pom_path = os.path.join(root_path,"pom.xml")
@@ -153,6 +170,21 @@ def main(pr_csv, clone_dir, test_file_info, model, nondex_times,result_csv,resul
                             info["polluter_class_content"][0] = polluter_class_content
                             info["polluter_class_imports"] = utils.get_imports(polluter_class_content)
                             info["polluter_method_content"] = utils.get_test_method(info["polluter_name"],polluter_class_content)
+                            if info["polluter_method_content"] is None:
+                                # same inherited-method lookup as for the victim
+                                resolved = utils.resolve_inherited_test_method(
+                                    info["polluter_name"], polluter_class_name, polluter_class_content, project_dir, module)
+                                if resolved is not None:
+                                    base_path, base_content, base_code = resolved
+                                    polluter_file_path = base_path
+                                    relative_polluter_file_path = base_path.split(project_dir + "/")[-1]
+                                    utils.git_checkout_file(project_dir, relative_polluter_file_path)
+                                    polluter_class_content = base_content
+                                    info["relative_polluter_file_path"] = relative_polluter_file_path
+                                    info["polluter_file_path"] = base_path
+                                    info["polluter_class_content"][0] = base_content
+                                    info["polluter_class_imports"] = utils.get_imports(base_content)
+                                    info["polluter_method_content"] = base_code
 
                 if victim_file_path_found and polluter_file_path_found:
                     jdk = "8"
@@ -290,6 +322,14 @@ def analyze_surefire_test_result(output):
     else:
         return "test_failure"
 
+def _mentions_file(line, class_file):
+    """True if `line` refers to `class_file` itself. A plain substring test is wrong
+    when one test class name ends with the other's: ServiceBasedNamingStoreTestCase.java
+    is inside WritableServiceBasedNamingStoreTestCase.java, which attributed the
+    polluter's compiler lines to the victim and indexed past the victim's last line."""
+    return re.search(r"(?<![A-Za-z0-9_$])" + re.escape(class_file), line) is not None
+
+
 def parse_compilation_err(output, polluter_test_class,victim_test_class, polluter_class_content,victim_class_content):
     polluter_class_file = polluter_test_class.split(".")[-1] + ".java"
     victim_class_file = victim_test_class.split(".")[-1] + ".java"
@@ -306,13 +346,13 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
     for output_line in output.split("\n"):
         p_lineno = None
         v_lineno = None
-        if polluter_class_file in output_line:
+        if _mentions_file(output_line, polluter_class_file):
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split(")")[0]
             try:
                 p_lineno = int(p_lineno_str)
             except:
                 pass
-        if polluter_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, polluter_class_file) and "[" in output_line and "]" in output_line:
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 p_lineno = int(p_lineno_str)
@@ -321,13 +361,13 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
         if p_lineno != None and p_lineno not in polluter_lineno_list:
             polluter_lineno_list.append(p_lineno)
 
-        if victim_class_file in output_line:
+        if _mentions_file(output_line, victim_class_file):
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split(")")[0]
             try:
                 v_lineno = int(v_lineno_str)
             except:
                 pass
-        if victim_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, victim_class_file) and "[" in output_line and "]" in output_line:
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 v_lineno = int(v_lineno_str)
@@ -337,12 +377,18 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
             victim_lineno_list.append(v_lineno)
 
     for number in polluter_lineno_list:
-        err_code = polluter_class_content.split("\n")[int(number)-1]
+        polluter_lines = polluter_class_content.split("\n")
+        if not 1 <= int(number) <= len(polluter_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = polluter_lines[int(number)-1]
         if err_code.strip() not in polluter_err_code_list:
             polluter_err_code_list.append(err_code.strip())
     
     for number in victim_lineno_list:
-        err_code = victim_class_content.split("\n")[int(number)-1]
+        victim_lines = victim_class_content.split("\n")
+        if not 1 <= int(number) <= len(victim_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = victim_lines[int(number)-1]
         if err_code.strip() not in victim_err_code_list:
             victim_err_code_list.append(err_code.strip())
         
@@ -353,15 +399,15 @@ def parse_compilation_err(output, polluter_test_class,victim_test_class, pollute
         if not line.startswith("[ERROR]"):
             continue
         tmp_line = line.replace("[ERROR]","").strip()
-        if polluter_class_file in tmp_line:
+        if _mentions_file(tmp_line, polluter_class_file):
             msg = tmp_line.split("]")[-1]
             if msg not in polluter_err_code_list:
                 polluter_err_msg_list.append(msg)
-        if victim_class_file in tmp_line:
+        if _mentions_file(tmp_line, victim_class_file):
             msg = tmp_line.split("]")[-1]
             if msg not in victim_err_code_list:
                 victim_err_msg_list.append(msg)
-        if polluter_class_file not in tmp_line and victim_class_file not in tmp_line:
+        if not _mentions_file(tmp_line, polluter_class_file) and not _mentions_file(tmp_line, victim_class_file):
             polluter_err_msg_list.append(tmp_line)
             victim_err_msg_list.append(tmp_line)
     return polluter_err_msg_list, victim_err_msg_list, polluter_err_code_list, victim_err_code_list
@@ -391,13 +437,13 @@ def parse_err_msg(output,polluter,victim,polluter_test_class,victim_test_class, 
         p_lineno = None
         v_lineno = None
         #polluter
-        if polluter_class_file in output_line:
+        if _mentions_file(output_line, polluter_class_file):
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split(")")[0]
             try:
                 p_lineno = int(p_lineno_str)
             except:
                 pass
-        if polluter_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, polluter_class_file) and "[" in output_line and "]" in output_line:
             p_lineno_str = str(output_line).split(polluter_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 p_lineno = int(p_lineno_str)
@@ -406,13 +452,13 @@ def parse_err_msg(output,polluter,victim,polluter_test_class,victim_test_class, 
         if p_lineno != None and p_lineno not in polluter_lineno_list:
             polluter_lineno_list.append(p_lineno)
         #victim
-        if victim_class_file in output_line:
+        if _mentions_file(output_line, victim_class_file):
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split(")")[0]
             try:
                 v_lineno = int(v_lineno_str)
             except:
                 pass
-        if victim_class_file in output_line and "[" in output_line and "]" in output_line:
+        if _mentions_file(output_line, victim_class_file) and "[" in output_line and "]" in output_line:
             v_lineno_str = str(output_line).split(victim_class_file + ":")[-1].split("[")[-1].split(",")[0].split("]")[0]
             try:
                 v_lineno = int(v_lineno_str)
@@ -422,12 +468,18 @@ def parse_err_msg(output,polluter,victim,polluter_test_class,victim_test_class, 
             victim_lineno_list.append(v_lineno)
 
     for number in polluter_lineno_list:
-        err_code = polluter_class_content.split("\n")[int(number)-1]
+        polluter_lines = polluter_class_content.split("\n")
+        if not 1 <= int(number) <= len(polluter_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = polluter_lines[int(number)-1]
         if err_code.strip() not in polluter_err_code_list:
             polluter_err_code_list.append(err_code.strip())
     
     for number in victim_lineno_list:
-        err_code = victim_class_content.split("\n")[int(number)-1]
+        victim_lines = victim_class_content.split("\n")
+        if not 1 <= int(number) <= len(victim_lines):
+            continue  # line number of another file (e.g. a longer class whose name contains this one)
+        err_code = victim_lines[int(number)-1]
         if err_code.strip() not in victim_err_code_list:
             victim_err_code_list.append(err_code.strip())
 
@@ -562,7 +614,7 @@ def generate_prompts(model, victim_name, polluter_name, test_type, \
     But if you didn't find above similar cases, you should fix by other ways, to make sure the test will always pass.
     """
 
-    if model in ["GPT-4", "Claude"]:
+    if model in ["OpenAI", "GPT-4", "Claude"]:
 
         gpt_prompt ="""You are a software testing expert. 
             I want you to fix a flaky test. \n{}\n
@@ -599,7 +651,7 @@ def generate_prompts(model, victim_name, polluter_name, test_type, \
             response = full_response.content[0].text
         else:
             full_response = openai.ChatCompletion.create(
-                model = "gpt-4", #"gpt-3.5-turbo",
+                model = os.environ.get("FD_OPENAI_MODEL") or "gpt-5.4",
                 temperature = 0.2,
                 messages = [
                     {"role": "user",
@@ -774,7 +826,9 @@ def repair_OD_tests(test_info, model,result_csv,result_json,save_dir, idx, loadi
                 result_dict[key] = test_info[key]
             utils.write_dict_csv(result_csv, result_csv_heads,result_dict)
             utils.write_json_attach(result_json, result_dict)
-            utils.git_checkout_file(project_dir,relative_file_path)
+            # OD has two files; there is no single relative_file_path here
+            utils.git_checkout_file(project_dir,relative_victim_file_path)
+            utils.git_checkout_file(project_dir,relative_polluter_file_path)
             return result_dict
         
         print("polluter_err_msg {}; victim_err_msg {}".format(polluter_err_msg, victim_err_msg))
@@ -797,7 +851,7 @@ def repair_OD_tests(test_info, model,result_csv,result_json,save_dir, idx, loadi
 
             print(victim_helper_methods, polluter_helper_methods,victim_global_vars, polluter_global_vars )
             # exit(0)
-            if model in ["GPT-4", "Claude"]:
+            if model in ["OpenAI", "GPT-4", "Claude"]:
                 try:
                     response, prompt = "", ""
                     response, prompt = generate_prompts(model, victim_test_method_name, polluter_test_method_name, test_type, \

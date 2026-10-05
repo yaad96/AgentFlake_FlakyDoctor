@@ -260,6 +260,7 @@ def main():
     summarize_id(out_dir, container_dir)
     rf.generate_semantic_diff(out_dir)
     rf.remove_flaky_m2(container_dir)
+    rf.prune_container_dir(container_dir)
 
 
 if __name__ == "__main__":

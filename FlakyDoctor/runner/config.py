@@ -1,8 +1,15 @@
-"""Model aliases and defaults for FlakyDoctor's Claude runner (run_claude.py).
+"""Model aliases and defaults for FlakyDoctor's LLM runner (run_claude.py).
 
-FlakyDoctor's Claude path calls the Anthropic API directly, so only Claude models
-are supported here.
+Claude models use Anthropic. GPT/OpenAI models use OpenAI.
 """
+
+# alias -> canonical OpenAI model id. The runner passes the resolved id to
+# FlakyDoctor's repair loop via the FD_OPENAI_MODEL environment variable.
+OPENAI_MODELS = {
+    "openai": "gpt-5.4",
+    "gpt": "gpt-5.4",
+    "gpt-5.4": "gpt-5.4",
+}
 
 # alias -> canonical Anthropic model id. The runner passes the resolved id to
 # FlakyDoctor's repair loop via the FD_CLAUDE_MODEL environment variable.

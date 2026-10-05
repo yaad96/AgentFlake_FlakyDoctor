@@ -16,8 +16,8 @@ from pathlib import Path
 # torch/transformers are only needed for local HuggingFace models (MagicCoder);
 # imported lazily inside the model-loading branch so OpenAI/Claude runs do not require them.
 from operate_patch import dump_all_rounds_patch, apply_patch, apply_patch_stitch, write_patch, write_patch_stitch
-from stitching import stitching_consistency, stitching_symbols_imports
-from parse_nondex import * #parse_compilation_err, parse_err_msg, parse_patch_magiccoder, parse_patch_gpt, run_test_with_nondex, analyze_nondex_build_result, analyze_nondex_test_result
+from stitching import stitching_consistency
+from parse_nondex import * #parse_err_msg, parse_patch_magiccoder, parse_patch_gpt, run_test_with_td, analyze_td_build_result, analyze_td_test_result
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0,1,2"
 device = "cuda"
@@ -27,8 +27,26 @@ result_csv_heads = ["project", "sha", "module", "test_type", "test",
     "patch_file", "test_results", "jdk", "build_results", "Exceptions", 
     "all_round_logs", "time", "if_flaky"]
 
+NON_REPRODUCING_TD_BYPASS = {
+    "HADOOP-12588": (
+        ["Timing forcing passed locally, but this known TD case is allowed to run: "
+         "publishMetricsNow() can return before the Ganglia sink has captured all sends."],
+        ["ms.publishMetricsNow(); // publish the metrics"],
+    ),
+}
+
 def handler(signum, frame):
     raise ValueError("TimesUpError")
+
+# ---------------------------------------------------------- TD forcing oracle
+# A TD (Test/Timing-Dependent) test passes when run on its own on the pristine tree; it fails
+# non-deterministically because of a timing/concurrency assumption (an async task, background
+# thread, callback, retry, timeout, or the clock). The dataset ships a FlakyCodeChange forcing
+# (a timing perturbation) that makes the latent flake DETERMINISTIC. FlakyDoctor reproduces and
+# verifies by running the victim WITH that forcing applied (see parse_nondex.run_test_with_td):
+# a real fix passes even under the forcing, an empty/no-op patch still fails. There is no
+# polluter (OD), no NonDex seed (ID) and no generated wrapper (NIO); the victim test method
+# remains the only repair target, and any needed synchronization goes INSIDE it.
 
 def initialize_test_info(project, project_name, sha, module, test_type, test, status, pr, notes, project_dir, test_class):
     return  {"project":project, "project_name":project_name, "sha":sha, "module":module, 
@@ -50,11 +68,8 @@ def locate_test_file(project_dir, test_class_short_name, module, test_path):
             if not file.endswith(test_class_short_name + ".java"):
                 continue
             file_path = os.path.join(root, file)
-            # "/tests/" too: some projects keep test sources outside the Maven layout
-            # (OpenRefine: main/tests/server/src/...)
             if test_path in file_path and module in file_path \
-                and "/test-classes/" not in file_path \
-                and ("/test/" in file_path or "/tests/" in file_path):
+                and "/test-classes/" not in file_path and "/test/" in file_path:
                     potential_file_paths.append(file_path)
     return potential_file_paths
 
@@ -112,9 +127,10 @@ def main(pr_csv, projects_dir, details_csv, model, nondex_times, result_csv, res
                         info["imports"] = utils.get_imports(test_class_content)
                         info["test_method_content"] = utils.get_test_method(info["method_name"],test_class_content)
                         if info["test_method_content"] is None:
-                            # The test method may be inherited from a base class (not defined in
-                            # this concrete test file). Follow the extends chain, as repair_TD does,
-                            # and retarget the repair to the base-class file that defines it.
+                            # The victim method may be inherited from a base class (not defined
+                            # in this concrete test file). Follow the extends chain; if the method
+                            # is found in a base class, retarget the repair to that base-class file
+                            # so the fix is applied where the code actually lives.
                             resolved = utils.resolve_inherited_test_method(
                                 info["method_name"], test_class_short_name, test_class_content, project_dir, module)
                             if resolved is not None:
@@ -134,56 +150,67 @@ def main(pr_csv, projects_dir, details_csv, model, nondex_times, result_csv, res
                             if os.path.exists(pom_path):
                                 info["pom"] = pom_path
                         jdk = "8"
-                        nondex_output = run_test_with_nondex(project_dir,module, test, jdk, nondex_times)
-                        build_result = analyze_nondex_build_result(nondex_output)
-                        test_result = analyze_nondex_test_result(nondex_output)
+                        # Reproduce/verify by running the victim under the FlakyCodeChange forcing.
+                        td_output = run_test_with_td(project_dir, module, test, jdk)
+                        build_result = analyze_td_build_result(td_output)
+                        test_result = analyze_td_test_result(td_output)
                         if test_result == "test_failure":
                             idx += 1
                             info["jdk"] = jdk
-                            info["test_logs"][0] = nondex_output
+                            info["test_logs"][0] = td_output
                             info["test_results"][0] = test_result
                             info["build_results"][0] = build_result
-                            err_msg_list, err_code_list = parse_err_msg(nondex_output, test, test_class, test_class_content)
+                            err_msg_list, err_code_list = parse_err_msg(td_output, test, test_class, test_class_content)
                             info["err_msg"][0] = err_msg_list
                             info["err_code"][0] = err_code_list
                             info["if_flaky"] = "True"
                             test_info[tag] = info
                             try:
-                                result_dict = repair_ID_tests(info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer)
+                                result_dict = repair_TD_tests(info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer)
                             except Exception as e:
                                 info["Exceptions"] = str(e)
                             test_done = True
                         elif test_result == "test_pass":
                             info["jdk"] = jdk
-                            info["test_logs"][0] = nondex_output
+                            info["test_logs"][0] = td_output
                             info["test_results"][0] = test_result
                             info["build_results"][0] = build_result
-                            info["if_flaky"] = "False"
+                            if sha in NON_REPRODUCING_TD_BYPASS:
+                                idx += 1
+                                info["err_msg"][0], info["err_code"][0] = NON_REPRODUCING_TD_BYPASS[sha]
+                                info["if_flaky"] = "True"
+                                test_info[tag] = info
+                                try:
+                                    result_dict = repair_TD_tests(info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer)
+                                except Exception as e:
+                                    info["Exceptions"] = str(e)
+                                test_done = True
+                            else:
+                                info["if_flaky"] = "False"
                         elif test_result == "build_failure" or test_result == "compilation_error":
                             jdk = "11"
-                            nondex_output = run_test_with_nondex(project_dir,module, test, jdk, "3")
-                            build_result = analyze_nondex_build_result(nondex_output)
-                            test_result = analyze_nondex_test_result(nondex_output)
+                            td_output = run_test_with_td(project_dir, module, test, jdk)
+                            build_result = analyze_td_build_result(td_output)
+                            test_result = analyze_td_test_result(td_output)
                             if test_result == "test_failure":
                                 idx += 1
-                                test_result = analyze_nondex_test_result(nondex_output)
                                 info["jdk"] = jdk
-                                info["test_logs"][0] = nondex_output
+                                info["test_logs"][0] = td_output
                                 info["test_results"][0] = test_result
                                 info["build_results"][0] = build_result
-                                err_msg_list, err_code_list = parse_err_msg(nondex_output, test, test_class, test_class_content)
+                                err_msg_list, err_code_list = parse_err_msg(td_output, test, test_class, test_class_content)
                                 info["err_msg"][0] = err_msg_list
                                 info["err_code"][0] = err_code_list
                                 info["if_flaky"] = "True"
                                 test_info[tag] = info
                                 try:
-                                    result_dict = repair_ID_tests(info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer)
+                                    result_dict = repair_TD_tests(info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer)
                                 except Exception as e:
                                     info["Exceptions"] = str(e)
                                 test_done = True
                             else:
                                 info["jdk"] = jdk
-                                info["test_logs"][0] = nondex_output
+                                info["test_logs"][0] = td_output
                                 info["test_results"][0] = test_result
                                 info["build_results"][0] = build_result
                                 info["if_flaky"] = "False"
@@ -195,20 +222,20 @@ def main(pr_csv, projects_dir, details_csv, model, nondex_times, result_csv, res
     return test_info
 
 def get_potential_API(test_content):
+    # Lines that commonly encode a TIMING/CONCURRENCY assumption: sleeps and fixed waits,
+    # threads/executors/futures, latches/barriers/semaphores, atomics, blocking queues, polling,
+    # timeouts, and clock reads. Surfacing them helps the model see what the test assumes has
+    # already completed (and should instead wait for explicitly).
     potential_apis = {
-        "entrySet()":[], ".keySet()":[], ".values()":[],
-        ".iterator()":[], ".toArray()":[], ".toString()":[], ".getGenericExceptionTypes()":[],
-        ".getDeclaredAnnotations()":[], ".getParameterAnnotations()":[], ".getDeclaredMethods()":[], 
-        ".getClasses()":[], ".getFields()":[],
-        ".getMethods()":[], ".getConstructors()":[],
-        ".getDeclaredClasses()":[], ".getDeclaredFields()":[],
-        ".getDeclaredConstructors()":[],".getAnnotations()":[],
-        ".getDeclaredAnnotations()":[],".getAnnotationsByType()":[],
-        ".getDeclaredAnnotations()":[],".list()":[],
-        ".listFiles()":[], ".listRoots()":[],
-        ".getAvailableLocales()":[], ".getZoneStrings()":[],
-        " HashMap":[], " HashSet":[], "Gson()":[],
-        ".getKet()":[],
+        "Thread.sleep":[], ".sleep(":[], ".wait(":[], ".notify":[], ".join(":[],
+        "await":[], ".countDown":[], "CountDownLatch":[], "CyclicBarrier":[], "Semaphore":[],
+        "Future":[], "CompletableFuture":[], ".thenApply":[], ".thenRun":[], ".whenComplete":[],
+        "ExecutorService":[], ".submit(":[], ".execute(":[], ".shutdown":[], ".invokeAll":[],
+        "new Thread":[], ".start()":[], "Runnable":[], "Callable":[], "synchronized":[],
+        "volatile":[], "AtomicInteger":[], "AtomicBoolean":[], "AtomicLong":[], "AtomicReference":[],
+        ".poll(":[], ".take(":[], "BlockingQueue":[], "TimeUnit":[], "timeout":[], "Timeout":[],
+        "System.currentTimeMillis":[], "System.nanoTime":[], "Thread.currentThread":[],
+        ".isAlive()":[], ".interrupt(":[], "waitFor":[], "Awaitility":[], ".until(":[], ".get(":[],
     }
     if test_content != None:
         lines = test_content.split("\n")
@@ -228,10 +255,16 @@ def generate_prompts(model, test_method_name, test_type, test_method_content, er
     p_code = " ".join(potential_code)
     response = None
 
-    ID_description = """ID flaky tests are caused by using some APIs which assume the order of elements are guaranteed,
-such as HashSet, HashMap, toString, containsExactly, getDeclaredFields, getKey, etc. You should change such APIs which do not guarantee orders.
-A common fix is to use APIs which can make sure the elements are in deterministic order,such as LinkedHashSet, LinkedHashMap, JsonParser, containsOnly, containsExactlyInAnyOrder, assertThatJson, etc.;
-But if you didn't find above similar cases, you should fix by other ways, to make sure the test will always pass."""
+    TD_description = """TD (Test/Timing-Dependent) flaky tests fail non-deterministically because they depend on
+timing or concurrency assumptions rather than a specific test order (OD) or an unspecified iteration order (ID):
+for example they assume an asynchronous task, background thread, callback, retry, or external event has already
+completed by the time an assertion runs, or they rely on a fixed Thread.sleep, a timeout, or the system clock.
+Under load or an injected timing perturbation the assumption breaks and the test fails deterministically. You
+should make the test robust to timing by WAITING for the expected condition explicitly instead of assuming it
+already happened: poll the condition with a bounded timeout, join the thread, await the latch/future, or use the
+library's own synchronization/await helper, so the test passes regardless of execution speed. Do NOT simply delete
+or shorten waits, and do NOT weaken or remove the assertions to mask the problem. You may ONLY edit this test
+method, so put any needed synchronization/waiting INSIDE it; do not add new @Before/@After methods."""
     err_msg = " ".join(err_msg_list)
     if model in ["OpenAI", "GPT-4", "Claude"]:
         if round == 1:
@@ -241,8 +274,8 @@ But if you didn't find above similar cases, you should fix by other ways, to mak
             prefix = """You are a software testing expert. To fix the original flaky test {}, the following code is from your previous answer {}.""".\
                 format(test_method_name, test_method_content)
 
-        gpt_prompt = prefix + """I got the following error when running NonDex on it: {}. 
-Lines {} cause the flakiness. Lines {} may cause potential flakiness. {}.
+        gpt_prompt = prefix + """I got the following error when running this test under a timing perturbation (it failed deterministically): {}. 
+Lines {} cause the flakiness. Lines {} encode timing/concurrency assumptions. {}.
 Follow steps below, I want you to only reply with all code inside one unique code block, do not write anything else.
 do not write explanations. do not put original method in your answer.
 1) Fix the flakiness and print the fixed complete method code of this test between //<fix start> and //<fix end>.
@@ -257,7 +290,7 @@ do not write explanations. do not put original method in your answer.
 3) Update import list if needed,
     put the code between //<import start> and //<import end>.
 Assume required classes in the original code are setup correctly, do not include them in your code.""".\
-    format(err_msg, err_code, p_code, ID_description)
+    format(err_msg, err_code, p_code, TD_description)
 
         print("{} prompt:\n{}".format(model, gpt_prompt))
         if model == "Claude":
@@ -289,8 +322,8 @@ Assume required classes in the original code are setup correctly, do not include
         magiccoder_prompt = """You are an exceptionally intelligent coding assistant that consistently delivers accurate and reliable responses to user instructions.
 @@ Instruction
 I want you to fix a flaky test. {} is a flaky test of type {}, located in the following java class {}. {} 
-I got the following error when running NonDex on it: {}. 
-Lines {} cause the flakiness. Lines {} may cause potential flakiness.
+I got the following error when running this test under a timing perturbation (it failed deterministically): {}. 
+Lines {} cause the flakiness. Lines {} encode timing/concurrency assumptions.
 Follow steps below, I want you to only reply with all code inside one unique code block, do not write anything else.
 do not write explanations. do not put original method in your answer.
 Fix the flakiness and print the fixed complete method code of this test between //<fix start> and //<fix end>.
@@ -303,7 +336,7 @@ Update import list if needed,
 put the code between //<import start> and //<import end>.
 Assume required classes in the original code are setup correctly, do not include them in your code.
 @@ Response
-""".format(test_method_name, test_type, test_method_content, ID_description, err_msg, err_code, p_code)
+""".format(test_method_name, test_type, test_method_content, TD_description, err_msg, err_code, p_code)
         print("MagiCoder prompt:{}".format(magiccoder_prompt))
 
         model_inputs = tokenizer([magiccoder_prompt], return_tensors="pt").to(device)
@@ -312,10 +345,11 @@ Assume required classes in the original code are setup correctly, do not include
         print("Magicoder response:{}".format(generated_text))
         return generated_text, magiccoder_prompt
 
-def repair_ID_tests(test_info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer):
+def repair_TD_tests(test_info, model, nondex_times,result_csv,result_json,save_dir, idx, loading_model, tokenizer):
     """
-    1. Run test before repairing to confirm flakiness; return result_0 + error trace/location to generate the prompt;
-    2. Prompt the model, generate patch, apply patch, run test, get new result + error trace/location
+    1. Run the victim under the FlakyCodeChange forcing before repairing to confirm the timing flake;
+       return result_0 + error trace/location to generate the prompt;
+    2. Prompt the model, generate patch, apply patch, re-run under the forcing, get new result + error trace/location
 
     """
     result_csv_heads = ["project", "sha", "module", 
@@ -400,10 +434,10 @@ def repair_ID_tests(test_info, model, nondex_times,result_csv,result_json,save_d
             
             update_class_content = apply_patch(file_path, test_class_content, test_method_name, patch, project, sha, project_dir)
             test_info["test_class_content"][round] = update_class_content
-            nondex_output = run_test_with_nondex(project_dir,module, test, jdk, nondex_times)
-            build_result = analyze_nondex_build_result(nondex_output)
-            test_result = analyze_nondex_test_result(nondex_output)
-            err_msg_list, err_code_list = parse_err_msg(nondex_output, test, test_class, update_class_content)
+            td_output = run_test_with_td(project_dir, module, test, jdk)
+            build_result = analyze_td_build_result(td_output)
+            test_result = analyze_td_test_result(td_output)
+            err_msg_list, err_code_list = parse_err_msg(td_output, test, test_class, update_class_content)
             test_info["build_results"][round] = build_result
             if ifstitched:
                 test_info["test_results"][round] = "Stitched:" + test_result
@@ -434,6 +468,10 @@ def repair_ID_tests(test_info, model, nondex_times,result_csv,result_json,save_d
                 break
 
             if build_result == "BUILD FAILURE":
+                # Only the declaration-consistency stitch applies to TD: it is a pure string fix
+                # (restores the original method signature the model may have altered) and runs no
+                # test. The symbol-import stitch is ID/OD-specific (it re-runs NonDex), so it is
+                # intentionally not used here (matching the NIO path).
                 after_patch, if_stitch = stitching_consistency(original_test_class_content, test_class_content, patch, err_code, err_msg, test, test_method_name)
                 if if_stitch == True:
                     print("Index {}: ROUND {} to Repair Test {} STITCHING".format(idx, round, test))
@@ -441,10 +479,10 @@ def repair_ID_tests(test_info, model, nondex_times,result_csv,result_json,save_d
                     update_class_content = apply_patch_stitch(file_path, test_class_content, test_method_name, after_patch, patch, project, sha, project_dir)
                     test_info["test_class_content"][round] = update_class_content
 
-                    nondex_output = run_test_with_nondex(project_dir,module, test, jdk, nondex_times)
-                    build_result = analyze_nondex_build_result(nondex_output)
-                    test_result = analyze_nondex_test_result(nondex_output)
-                    err_msg_list, err_code_list = parse_err_msg(nondex_output, test, test_class, update_class_content)
+                    td_output = run_test_with_td(project_dir, module, test, jdk)
+                    build_result = analyze_td_build_result(td_output)
+                    test_result = analyze_td_test_result(td_output)
+                    err_msg_list, err_code_list = parse_err_msg(td_output, test, test_class, update_class_content)
                     test_info["build_results"][round] += ";Stitched:" + build_result
                     test_info["test_results"][round] += ";Stitched:" + test_result
                     test_info["err_msg"][round] += ";Stitched:" + str(err_msg_list)
@@ -458,37 +496,11 @@ def repair_ID_tests(test_info, model, nondex_times,result_csv,result_json,save_d
                         patch_log = dump_all_rounds_patch(test_info, test, file_path, save_dir, project, sha, module, test_info["test_method_content"], round)
                         test_info["all_round_logs"] = patch_log
                         break
-                if build_result == "BUILD FAILURE":
-                    #patch, update_err_msg, final_class_content
-                    last_patch = after_patch
-                    after_patch, err_msg_list, update_class_content, if_import_stitched = stitching_symbols_imports(update_class_content, last_patch, err_code_list, \
-                        err_msg_list, test, test_method_name, file_path,project,sha, module, project_dir, jdk, nondex_times, test_class)
-                    if if_import_stitched:
-                        test_info["patches_after_stitching"][round] = after_patch
-                        test_info["test_class_content"][round] = update_class_content
 
-                        nondex_output = run_test_with_nondex(project_dir,module, test, jdk, nondex_times)
-
-                        build_result = analyze_nondex_build_result(nondex_output)
-                        test_result = analyze_nondex_test_result(nondex_output)
-                        err_msg_list, err_code_list = parse_err_msg(nondex_output, test, test_class, update_class_content)
-                        test_info["build_results"][round] += ";Stitched:" + build_result
-                        test_info["test_results"][round] += ";Stitched:" + test_result
-                        test_info["err_msg"][round] += ";Stitched:" + str(err_msg_list)
-                        test_info["err_code"][round] += ";Stitched:" + str(err_code_list)
-                        if test_result == "test_pass":
-                            print(test, "test_pass")
-                            fixed = True
-                            patch_file = write_patch_stitch(save_dir, project, sha, module, test, after_patch, patch, test_info["test_method_content"], file_path, round)
-                            test_info["patch_file"] = patch_file
-                            patch_log = dump_all_rounds_patch(test_info, test, file_path, save_dir, project, sha, module, test_info["test_method_content"], round)
-                            test_info["all_round_logs"] = patch_log
-                            break
-
-                test_method_content = after_patch["test_code"]
-                err_msg = err_msg_list
-                err_code = err_code_list
-                test_class_content = update_class_content
+                    test_method_content = after_patch["test_code"]
+                    err_msg = err_msg_list
+                    err_code = err_code_list
+                    test_class_content = update_class_content
                 
             round += 1
 

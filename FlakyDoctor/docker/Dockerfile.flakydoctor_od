@@ -21,13 +21,30 @@ FROM ${BASE}
 WORKDIR /app
 
 # Toolchain: the base testorder Dockerfile.od set + git (needed by FlakyDoctor) and
-# python3-pip (for the Claude backend).
-RUN apt-get update && \
+# python3-pip (for the Claude backend). `patch` applies/reverts the TD FlakyCodeChange forcing.
+# bullseye-security is dropped: Debian 11 left LTS on 2026-08-31 and that repo's
+# package files now 404 on deb.debian.org; bullseye + bullseye-updates still resolve.
+RUN sed -i "/bullseye-security/d" /etc/apt/sources.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends \
-        autoconf automake libtool curl make g++ unzip \
-        python3 python3-pip git xmlstarlet && \
+        autoconf automake libtool curl make g++ unzip patch \
+        python3 python3-pip git xmlstarlet wget libnss-wrapper && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
+
+# Hadoop 3.3.0-era builds call `protoc --version` from hadoop-maven-plugins
+# and expect protobuf/protoc 2.5.0. Keep this opt-in so non-Hadoop images stay
+# as small and fast to build as before.
+ARG WITH_PROTOBUF=false
+RUN if [ "$WITH_PROTOBUF" = "true" ]; then \
+        wget https://github.com/protocolbuffers/protobuf/releases/download/v2.5.0/protobuf-2.5.0.tar.gz && \
+        tar -xzf protobuf-2.5.0.tar.gz && \
+        cd protobuf-2.5.0 && \
+        ./configure && make && make install && ldconfig && \
+        cd .. && rm -rf protobuf-2.5.0 protobuf-2.5.0.tar.gz ; \
+    else \
+        echo "WITH_PROTOBUF=$WITH_PROTOBUF — skipping protobuf/protoc 2.5.0" ; \
+    fi
 
 # Build + install the Illinois testorder Surefire as a Maven core extension.
 # This is the capability that orders methods *within a class*, so same-class OD
@@ -50,9 +67,12 @@ RUN if [ "$WITH_TESTORDER" = "true" ]; then \
 
 # FlakyDoctor's Claude-path Python deps only. openai is a hard top-level import
 # in flakydoctor.py/repair_OD.py even for Claude runs, so it must be present.
+# anthropic is pinned: 1.x (Python >= 3.10, so it lands in the Ubuntu-based JDK-17
+# image) dropped `temperature` from Messages.create(), which the repair loop passes.
+# 0.125.0 is what the Python-3.9 JDK-8/11 images already resolve to.
 RUN pip3 install --no-cache-dir \
         "openai==0.28.0" \
-        anthropic \
+        "anthropic==0.125.0" \
         "beautifulsoup4==4.12.3" \
         lxml && \
     pip3 uninstall -y javalang || true && \

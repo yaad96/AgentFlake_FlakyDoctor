@@ -15,8 +15,8 @@ runOrder=${SUREFIRE_RUN_ORDER:-testorder}
 run_test(){
     # NOTE: removed broken `--log-file ${logDir}/"$1".log` (logDir was never defined);
     # output must go to stdout because repair_OD.py parses the subprocess stdout.
-    echo mvn test -pl ${module} -Dsurefire.runOrder=${runOrder} -Dtest=${polluterFormatTest},${victimFormatTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Djacoco.skip -Dspotless.check.skip
-    mvn test -pl ${module} -Dsurefire.runOrder=${runOrder} -Dtest=${polluterFormatTest},${victimFormatTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Djacoco.skip -Dspotless.check.skip
+    echo mvn test -pl ${module} -Dsurefire.runOrder=${runOrder} -Dtest=${polluterFormatTest},${victimFormatTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Djacoco.skip -Dspotless.check.skip -Ddisable.checks=true
+    mvn test -pl ${module} -Dsurefire.runOrder=${runOrder} -Dtest=${polluterFormatTest},${victimFormatTest} -Drat.skip -Dcheckstyle.skip -Denforcer.skip=true -Dspotbugs.skip -Dmaven.test.failure.ignore=true -Djacoco.skip -Danimal.sniffer.skip -Dmaven.antrun.skip -Djacoco.skip -Dspotless.check.skip -Ddisable.checks=true
 }
 
 echo "* RUNNING Surefire on OD tests ${polluterFormatTest} ${victimFormatTest} STARTING at $(date)"

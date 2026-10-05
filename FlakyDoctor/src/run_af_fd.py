@@ -28,6 +28,7 @@ Usage (from the FlakyDoctor root):
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -42,16 +43,28 @@ MVN_SKIP_FLAGS = (
     # -Dskip.web.build=true skips graylog2-server's node/yarn web-UI build (its
     # web-interface-build profile is active unless this property is set); harmless
     # (unused) for every other project.
+    # -Ddisable.checks=true is Spring Boot's own gate: its poms wire checkstyle as
+    # <skip>${disable.checks}</skip> (bound to the validate phase), so the generic
+    # -Dcheckstyle.skip does NOT turn it off; harmless (unused) for other projects.
     "-DskipTests -Dfindbugs.skip=true -Dgpg.skip -Drat.skip -Dcheckstyle.skip "
     "-Denforcer.skip=true -Dspotbugs.skip -Djacoco.skip -Danimal.sniffer.skip "
     "-Dmaven.antrun.skip -Dlicense.skip -Dmaven.javadoc.skip=true -Dskip.web.build=true "
-    "-DskipDockerBuild -Ddependency-check.skip -Dspotless.check.skip"
+    "-DskipDockerBuild -Ddependency-check.skip -Dspotless.check.skip -Ddisable.checks=true"
 ).split()
 
 # hbase-common (and similar) GENERATE required sources (e.g. Version.java) with an
 # antrun task that -Dmaven.antrun.skip starves, breaking compilation. The build
 # fallback uses this antrun-enabled variant (skip dropped) so that codegen runs.
 MVN_SKIP_FLAGS_ANTRUN = [f for f in MVN_SKIP_FLAGS if f != "-Dmaven.antrun.skip"]
+
+# Local archive override, HADOOP-12588 ONLY: FlakyDoctor/local_archives/HADOOP-12588.zip
+# (substitute with a deterministic forcing) is staged instead of downloading row["url"].
+# Every other container is fetched exactly as before. FlakyDoctor/ is mounted at
+# /work in docker, so the same path works inside it.
+LOCAL_ARCHIVE_ZIPS = ("HADOOP-12588",)
+LOCAL_ARCHIVES_DIR = os.environ.get("AF_LOCAL_ARCHIVES_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "local_archives")
+LOCAL_ARCHIVE_MARKER = ".local_archive.sha256"   # which local zip a container was staged from
 
 
 def log(msg):
@@ -119,6 +132,21 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         log(f"--fresh: removing existing staged container {container_dir}")
         shutil.rmtree(container_dir, ignore_errors=True)
 
+    # For LOCAL_ARCHIVE_ZIPS, a local archive wins over row["url"]. Anything staged
+    # from another archive (e.g. an older Zenodo staging) is wiped first: the
+    # "already staged" skip below and the no-overwrite move of the patch files
+    # would otherwise keep serving the old FlakyCodeChange.patch.
+    local_zip = os.path.join(LOCAL_ARCHIVES_DIR, zip_base + ".zip")
+    local_sha = None
+    if zip_base in LOCAL_ARCHIVE_ZIPS and os.path.isfile(local_zip):
+        with open(local_zip, "rb") as f:
+            local_sha = hashlib.sha256(f.read()).hexdigest()
+        marker = os.path.join(container_dir, LOCAL_ARCHIVE_MARKER)
+        staged_sha = open(marker).read().strip() if os.path.isfile(marker) else None
+        if os.path.isdir(container_dir) and staged_sha != local_sha:
+            log(f"{container_dir} was not staged from local archive {local_zip} — re-staging")
+            _rmtree_force(container_dir)
+
     project_dir, project_name, github_url = _find_staged_project(container_dir)
     if project_dir:
         if os.path.isdir(os.path.join(container_dir, "Flakym2")):
@@ -129,8 +157,10 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         log(f"staged project found but Flakym2 (offline .m2) missing — re-staging {container_dir}")
         shutil.rmtree(container_dir, ignore_errors=True)
 
-    zip_path = os.path.join("/tmp", f"af_fd_{zip_base}.zip")
-    if not os.path.exists(zip_path):
+    zip_path = local_zip if local_sha else os.path.join("/tmp", f"af_fd_{zip_base}.zip")
+    if local_sha:
+        log(f"using local archive {local_zip} (not downloading {row['url']})")
+    elif not os.path.exists(zip_path):
         log(f"downloading {row['url']} ...")
         try:
             # download to a temp name; only rename once complete, so an interrupted
@@ -143,6 +173,8 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
             raise
     log(f"unzipping {zip_path} ...")
     if not zipfile.is_zipfile(zip_path):
+        if local_sha:
+            die(f"local archive {zip_path} is not a valid zip")
         os.remove(zip_path)
         die(f"{zip_path} is not a valid zip (corrupt download removed — rerun to refetch)")
     extract_root = os.path.join("/tmp", f"af_fd_extract_{zip_base}")
@@ -164,13 +196,22 @@ def stage_container(row, projects_dir, keep_zip=False, fresh=False):
         else row["zip_id"].split("=")[0]
 
     os.makedirs(container_dir, exist_ok=True)
-    shutil.move(os.path.join(src_root, "Flaky"), os.path.join(container_dir, project_name))
-    for extra in ("Flakym2", "Fixed.patch", "flaky_info.txt"):
+    dest = os.path.join(container_dir, project_name)
+    if os.path.exists(dest):
+        # a previous run's cleanup can leave a gutted source dir (surefire reports,
+        # .git text remnants) with no pom.xml behind; remove it so the fresh Flaky/
+        # lands cleanly (shutil.move into an existing dir would nest it as <project>/Flaky).
+        _rmtree_force(dest)
+    shutil.move(os.path.join(src_root, "Flaky"), dest)
+    for extra in ("Flakym2", "Fixed.patch", "FlakyCodeChange.patch", "flaky_info.txt"):
         src = os.path.join(src_root, extra)
         if os.path.exists(src) and not os.path.exists(os.path.join(container_dir, extra)):
             shutil.move(src, os.path.join(container_dir, extra))
     shutil.rmtree(extract_root, ignore_errors=True)
-    if not keep_zip:
+    if local_sha:   # never delete the local archive; record what was staged
+        with open(os.path.join(container_dir, LOCAL_ARCHIVE_MARKER), "w") as f:
+            f.write(local_sha + "\n")
+    elif not keep_zip:
         os.remove(zip_path)
 
     project_dir = os.path.join(container_dir, project_name)
@@ -212,6 +253,143 @@ def remove_flaky_m2(container_dir):
         log(f"cleanup: removed offline maven repo {m2_dir} (KEEP_FLAKY_M2=1 to keep)")
 
 
+def _rmtree_force(path):
+    """Remove a whole directory tree, returning (files_removed, bytes_removed). Uses
+    `rm -rf`, which reliably clears trees that shutil.rmtree leaves partially removed on
+    macOS — a committed .git carries thousands of objects plus files with BSD flags
+    (UF_HIDDEN) / extended attributes that make fd-based rmtree drop a few entries per
+    pass. Falls back to a chmod-retry shutil.rmtree if `rm` is somehow unavailable."""
+    files = total = 0
+    for r, _ds, fs in os.walk(path):
+        for name in fs:
+            try:
+                total += os.path.getsize(os.path.join(r, name))
+                files += 1
+            except OSError:
+                pass
+
+    try:
+        subprocess.run(["rm", "-rf", path], check=False)
+    except (OSError, ValueError):
+        def _onerror(func, p, _exc):
+            try:
+                os.chmod(p, 0o700)
+                func(p)
+            except OSError:
+                pass
+        for _ in range(5):
+            if not os.path.isdir(path):
+                break
+            shutil.rmtree(path, onerror=_onerror)
+    return files, total
+
+
+# The only staged-project content kept after a run is the surefire/failsafe test failure
+# log; the whole rest of the source tree is deleted.
+_TARGET_KEEP = frozenset({"surefire-reports", "failsafe-reports"})
+
+
+def _reduce_dir_to_reports(project_dir, drop):
+    """Delete everything under `project_dir` except the surefire/failsafe report subtrees
+    (and the directory chain leading down to them). `drop(path)` removes a file or a whole
+    tree and accumulates the caller's counters. A project with no reports is deleted whole."""
+    proot = os.path.realpath(project_dir)
+    # 1. locate the report dirs (don't descend into them during the scan)
+    reports = []
+    for root, dirs, _files in os.walk(project_dir):
+        for d in list(dirs):
+            if d in _TARGET_KEEP:
+                reports.append(os.path.realpath(os.path.join(root, d)))
+                dirs.remove(d)
+    if not reports:
+        drop(project_dir)
+        return
+    # 2. the report dirs + their ancestor chain up to project_dir are kept
+    keep = {proot}
+    for rp in reports:
+        p = rp
+        while p != proot and os.path.dirname(p) != p:
+            keep.add(p)
+            p = os.path.dirname(p)
+    # 3. collect everything off that chain (scan fully first, remove after -- never rm mid-walk)
+    to_remove = []
+    for root, dirs, files in os.walk(project_dir, topdown=True):
+        rroot = os.path.realpath(root)
+        if rroot in reports or any(rroot.startswith(r + os.sep) for r in reports):
+            dirs[:] = []                       # inside a report subtree: keep as-is
+            continue
+        for name in files:
+            to_remove.append(os.path.join(root, name))
+        for d in list(dirs):
+            dpath = os.path.realpath(os.path.join(root, d))
+            if dpath in keep:
+                continue                       # ancestor of a report: descend into it
+            to_remove.append(os.path.join(root, d))
+            dirs.remove(d)                     # off-path subtree: remove wholesale
+    for path in to_remove:
+        drop(path)
+
+
+def prune_container_dir(container_dir):
+    """Reclaim disk after a completed run: reduce projects/<container>/ to just the developer
+    solution (Fixed.patch), the flake metadata (flaky_info.txt), and the test failure log
+    (surefire-reports / failsafe-reports). The entire staged source tree is deleted -- the fix
+    lives in Fixed.patch (and the FlakyDoctor patch / semantic diff) and the failure in the
+    reports and the data/<container>/run_NN archive. The offline maven repo (Flakym2) is left
+    to remove_flaky_m2. Skipped when KEEP_SOURCE=1 (e.g. between pass@k runs, or to inspect
+    the staged tree by hand)."""
+    if os.environ.get("KEEP_SOURCE") == "1":
+        return
+    if not os.path.isdir(container_dir):
+        return
+    croot = os.path.realpath(container_dir)
+    removed_files = removed_bytes = removed_dirs = 0
+
+    def _drop(path):
+        nonlocal removed_files, removed_bytes, removed_dirs
+        if os.path.isdir(path) and not os.path.islink(path):
+            n, b = _rmtree_force(path)
+            removed_files += n
+            removed_bytes += b
+            removed_dirs += 1
+        else:
+            try:
+                removed_bytes += os.path.getsize(path)
+            except OSError:
+                pass
+            try:
+                os.remove(path)
+                removed_files += 1
+            except OSError:
+                pass
+
+    # Keep the container's root files (Fixed.patch, flaky_info.txt) and Flakym2 (handled by
+    # remove_flaky_m2); reduce every staged project directory to just its failure reports.
+    for entry in sorted(os.listdir(container_dir)):
+        full = os.path.join(container_dir, entry)
+        if entry == "Flakym2":
+            continue
+        if not os.path.isdir(full) or os.path.islink(full):
+            continue
+        _reduce_dir_to_reports(full, _drop)
+
+    # prune the empty directory skeleton left behind (keep the container dir itself)
+    for root, dirs, files in os.walk(container_dir, topdown=False):
+        if os.path.realpath(root) == croot:
+            continue
+        try:
+            if not os.listdir(root):
+                os.rmdir(root)
+                removed_dirs += 1
+        except OSError:
+            pass
+
+    if removed_files or removed_dirs:
+        log(f"cleanup: reduced {container_dir} to metadata + failure reports "
+            f"(removed {removed_files} file(s), ~{removed_bytes // (1024*1024)} MB, "
+            f"{removed_dirs} dir(s); KEEP_SOURCE=1 to skip)")
+
+
 def ensure_git_baseline(project_dir):
     # CRITICAL: only skip if project_dir is the ROOT of its OWN git repo. A bare
     # `rev-parse --git-dir` succeeds even when project_dir merely sits *inside* an
@@ -222,6 +400,21 @@ def ensure_git_baseline(project_dir):
                          capture_output=True, text=True)
     if top.returncode == 0 and \
             os.path.realpath(top.stdout.strip()) == os.path.realpath(project_dir):
+        # The zip shipped its own .git. Its working tree can differ from HEAD: oddubbo1's
+        # dataset rewrote 69 pom.xml files after checkout, and FlakyDoctor's first
+        # `git stash` reverted them, so every build afterwards failed. Commit tracked-file
+        # edits as the baseline so stash/checkout restore the dataset's tree, not upstream's.
+        # Tracked files only (-u): a re-run must not sweep build output into the baseline.
+        dirty = subprocess.run(["git", "-C", project_dir, "status", "--porcelain",
+                                "--untracked-files=no"],
+                               capture_output=True, text=True).stdout.strip()
+        if dirty:
+            log(f"project ships its own git repo with {len(dirty.splitlines())} uncommitted "
+                "tracked change(s) — committing them as the baseline")
+            subprocess.run(["git", "-C", project_dir, "add", "-u"], check=True)
+            subprocess.run(["git", "-C", project_dir,
+                            "-c", "user.name=FlakyDoctor", "-c", "user.email=flakydoctor@local",
+                            "commit", "-qm", "AgentFlake dataset edits baseline"], check=True)
         return
     log("creating project-local git baseline (isolates FlakyDoctor's git ops from the outer repo)")
     subprocess.run(["git", "-C", project_dir, "init", "-q"], check=True)
@@ -267,6 +460,17 @@ def maven_env(container_dir, jdk):
         # so it overrides the image's default /root/.m2 repo.local.
         env["MAVEN_ARGS"] = f"-Dmaven.repo.local={staged_m2}"
         env["MAVEN_OPTS"] = f"-Dmaven.repo.local={staged_m2}"
+    else:
+        # No staged offline repo shipped for this container. Still steer Maven away
+        # from the image's default /root/.m2, which is not writable when the
+        # container runs as a non-root user — Maven then dies with "Could not create
+        # local repository at /root/.m2/repository" before any build work. Pin
+        # repo.local to a writable path under the (bind-mounted, writable) container
+        # dir; Maven creates and populates it via online resolution.
+        fallback_m2 = os.path.join(os.path.abspath(container_dir), "Flakym2", ".m2", "repository")
+        os.makedirs(fallback_m2, exist_ok=True)
+        env["MAVEN_ARGS"] = f"-Dmaven.repo.local={fallback_m2}"
+        env["MAVEN_OPTS"] = f"-Dmaven.repo.local={fallback_m2}"
     # -Dskip.web.build=true via MAVEN_OPTS so it also reaches FlakyDoctor's stock
     # run_nondex.sh (it inherits this env) — deactivates graylog's yarn web build
     # at the verification step too, without modifying FlakyDoctor.
@@ -737,6 +941,7 @@ def main():
     summarize(out_dir, container_dir)
     generate_semantic_diff(out_dir)
     remove_flaky_m2(container_dir)
+    prune_container_dir(container_dir)
 
 
 if __name__ == "__main__":
