@@ -29,7 +29,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FLAKYDOCTOR_DIR="$(dirname "$SCRIPT_DIR")"
 TEST_CONFIG="${TEST_CONFIG:-$FLAKYDOCTOR_DIR/test_config.csv}"
-RUN_MODEL="${FD_RUN_MODEL:-OpenAI}"
+RUN_MODEL="${FD_RUN_MODEL:-Claude}"
 if [[ "$RUN_MODEL" == "Claude" ]]; then
     API_KEY_ENV_NAME="ANTHROPIC_API_KEY"
     API_KEY_FILE="${API_KEY_FILE:-$FLAKYDOCTOR_DIR/.anthropic_api_key}"

@@ -259,8 +259,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="CLI runner for FlakyDoctor's OpenAI/Claude repair (ID/OD/NIO/TD only).")
     ap.add_argument("container", help="result_container name from test_config.csv")
-    ap.add_argument("--models", default="openai",
-                    help="comma-separated model aliases/ids (default: openai -> gpt-5.4)")
+    ap.add_argument("--models", default="claude",
+                    help="comma-separated model aliases/ids (default: claude -> claude-sonnet-4-6)")
     ap.add_argument("--runs", type=int, default=1,
                     help="independent runs per model for pass@k (default 1)")
     ap.add_argument("--reproduce-only", action="store_true",

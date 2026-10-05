@@ -4,7 +4,7 @@ FlakyDoctor repairs ID, OD, NIO and TD flaky
 Java tests with a neuro-symbolic loop. This version adds a Claude (Anthropic)
 backend and a containerized runner that reproduces a flake inside Docker, repairs
 it with the original FlakyDoctor pipeline, and archives the full run under
-`FlakyDoctor/data/<test>/run_<NN>/`.
+`FlakyDoctor/data/<test>/<model>/run_<NN>/`.
 
 ## Requirements
 
@@ -15,9 +15,9 @@ it with the original FlakyDoctor pipeline, and archives the full run under
 
 ## Setup
 
-From the repo root, create a file `.anthropic_api_key` and store your API key
-there. The key is read from that file during a run. The file is git-ignored, so
-it is safe.
+Inside the `FlakyDoctor/` directory, create a file `.anthropic_api_key` and store
+your API key there. The key is read from that file during a run. The file is
+git-ignored, so it is safe.
 
 ## Basic Run
 
@@ -94,14 +94,15 @@ Run data for this test is in `FlakyDoctor_Data.zip/TD/BOOKKEEPER-846`.
 |---|---|
 | `--runs N` | Independent runs for pass@k, which counts a test as repaired if at least one of the N independently sampled runs yields a verified fix. |
 | `--models claude,opus,haiku` | One or more Claude models. |
-| `--reproduce-only` | Reproduce the flake without repairing it. No API key needed. |
+
 
 ## Output
 
-Each run is archived under:
+Each run is archived under the following directory, where `<model>` is the model
+id (for example, `claude-sonnet-4-6`):
 
 ```text
-FlakyDoctor/data/<test>/run_<NN>/
+FlakyDoctor/data/<test>/<model>/run_<NN>/
   flakydoctor_output/     # FlakyDoctor results.csv / results.json / patches
     semantic_diff.diff    # the LLM's change per round (passing + failing), clean diff
   meta.json               # verdict, model, timing
@@ -118,5 +119,4 @@ FlakyDoctor/data/<test>/summary.csv
 FlakyDoctor/data/Complete_Containers_Summary.csv
 ```
 
-All run data is available in `FlakyDoctor_Data.zip`, covering 41 OD tests and 41
-ID tests.
+All run data is available in `FlakyDoctor_Data.zip`, covering 41 OD tests, 41 ID tests, 41 NIO tests and 41 TD tests.
