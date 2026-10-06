@@ -1,17 +1,17 @@
 # FlakyDoctor (AgentFlake Version: with NIO and TD)
 
-FlakyDoctor repairs ID, OD, NIO and TD flaky
-Java tests with a neuro-symbolic loop. This version adds a Claude (Anthropic)
-backend and a containerized runner that reproduces a flake inside Docker, repairs
-it with the original FlakyDoctor pipeline, and archives the full run under
-`FlakyDoctor/data/<test>/<model>/run_<NN>/`.
+FlakyDoctor repairs ID, OD, NIO and TD flaky Java tests with a neuro-symbolic
+loop. This version adds a Claude (Anthropic) backend and a containerized runner
+that reproduces a flake inside Docker, repairs it with the original FlakyDoctor
+pipeline, and archives the full run under `FlakyDoctor/data/<test>/<model>/run_<NN>/`.
 
 ## Requirements
 
 - Docker installed and running (all builds and tests happen inside the container).
 - An Anthropic API key.
-- Linux and macOS are supported. The host needs `bash`, `python3`, and `docker`;
-  the JDK/Maven toolchain lives in the image.
+- Linux and macOS are supported. The host needs `bash`, `python3` and `docker`;
+  the JDK/Maven toolchain lives in the Docker image, which the runner builds on
+  first use.
 
 ## Setup
 
@@ -22,7 +22,8 @@ git-ignored, so it is safe.
 ## Basic Run
 
 The runner auto-detects the test type from `test_config.csv`, so the same command
-handles all the mentioned flakiness types. Pass the test name from the `result_container` column:
+handles all four flaky-test categories. Pass the test name from the
+`result_container` column:
 
 ```bash
 cd FlakyDoctor
@@ -86,15 +87,12 @@ python3 runner/run_claude.py \
 
 Run data for this test is in `AF_FlakyDoctor_Claude.zip/TD/BOOKKEEPER-846`.
 
-
-
 ## Options
 
-| Option / env var | Purpose |
+| Option | Purpose |
 |---|---|
 | `--runs N` | Independent runs for pass@k, which counts a test as repaired if at least one of the N independently sampled runs yields a verified fix. |
 | `--models claude,opus,haiku` | One or more Claude models. |
-
 
 ## Output
 
