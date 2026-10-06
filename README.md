@@ -119,4 +119,4 @@ FlakyDoctor/data/<test>/summary.csv
 FlakyDoctor/data/Complete_Containers_Summary.csv
 ```
 
-All run data is available in `FlakyDoctor_Data.zip`, covering 41 OD tests, 41 ID tests, 41 NIO tests and 41 TD tests.
+All run data is available in `AF_FlakyDoctor_Claude.zip`, covering 41 OD tests, 41 ID tests, 41 NIO tests and 41 TD tests.
