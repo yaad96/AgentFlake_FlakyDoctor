@@ -14,7 +14,7 @@ NOTE: this is a plain CLI runner, not an agent — FlakyDoctor calls the Anthrop
 API directly inside its neuro-symbolic repair loop. FlakyDoctor repairs ID, OD,
 NIO and TD.
 
-- Reads FlakyDoctor/test_config.csv, then mahbub_test_config.csv (first match wins),
+- Reads FlakyDoctor/test_config.csv, then extra_test_config.csv (first match wins),
   dispatches by test type.
 - Runs the repair once per --runs, archiving each to
   FlakyDoctor/data/<container>/<model>/run_<NN>/ with meta.json + a verdict.
@@ -42,8 +42,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 FLAKYDOCTOR_DIR = SCRIPT_DIR.parent
 CSV_FILE = FLAKYDOCTOR_DIR / "test_config.csv"
 # Searched in order; the first file with a matching row wins. Some containers
-# (e.g. oddubbo1, idhivestnd1) exist only in mahbub_test_config.csv.
-CSV_FILES = [CSV_FILE, FLAKYDOCTOR_DIR / "mahbub_test_config.csv"]
+# (e.g. oddubbo1, idhivestnd1) exist only in extra_test_config.csv.
+CSV_FILES = [CSV_FILE, FLAKYDOCTOR_DIR / "extra_test_config.csv"]
 RUN_IN_CONTAINER = FLAKYDOCTOR_DIR / "docker" / "run_in_container.sh"
 OUTPUTS_DIR = FLAKYDOCTOR_DIR / "outputs"
 DATA_DIR = FLAKYDOCTOR_DIR / "data"
