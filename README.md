@@ -51,7 +51,7 @@ python3 runner/run_claude.py \
 ```
 
 Run data for this test is in
-`FlakyDoctor_Data.zip/ID/apollojavaapolloopenapi5344bc4testFindItemsByNamespace`.
+`AF_FlakyDoctor_Claude.zip/ID/apollojavaapolloopenapi5344bc4testFindItemsByNamespace`.
 
 ### OD
 
@@ -62,7 +62,7 @@ python3 runner/run_claude.py \
   --runs 1 --models claude
 ```
 
-Run data for this test is in `FlakyDoctor_Data.zip/OD/ormlitecore59309e5`.
+Run data for this test is in `AF_FlakyDoctor_Claude.zip/OD/ormlitecore59309e5`.
 
 ### NIO
 
@@ -73,7 +73,7 @@ python3 runner/run_claude.py \
   --runs 1 --models claude
 ```
 
-Run data for this test is in `FlakyDoctor_Data.zip/NIO/quickcheckc1c1`.
+Run data for this test is in `AF_FlakyDoctor_Claude.zip/NIO/quickcheckc1c1`.
 
 ### TD
 
@@ -84,7 +84,7 @@ python3 runner/run_claude.py \
   --runs 1 --models claude
 ```
 
-Run data for this test is in `FlakyDoctor_Data.zip/TD/BOOKKEEPER-846`.
+Run data for this test is in `AF_FlakyDoctor_Claude.zip/TD/BOOKKEEPER-846`.
 
 
 
